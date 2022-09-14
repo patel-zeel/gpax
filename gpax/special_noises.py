@@ -32,7 +32,7 @@ class HeteroscedasticNoise(Noise):
         params = params["noise"]
         return jnp.exp(
             self.noise_gp.predict(params["noise_gp"], X_inducing, params["latent_log_noise"], X, return_cov=False)
-        )
+        ).squeeze()  # squeeze is needed to make (n, 1) -> (n,)
 
     def __initialise_params__(self, key, X_inducing):
         params = {}

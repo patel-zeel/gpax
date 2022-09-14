@@ -18,7 +18,7 @@ class GibbsKernel(Kernel):
     @staticmethod
     def predict_scale_per_dim(x, X_inducing, scale_gp_params, latent_log_scale):
         scale_gp = ExactGP()
-        return B.exp(scale_gp.predict(scale_gp_params, X_inducing, latent_log_scale, x, return_cov=False))
+        return B.exp(scale_gp.predict(scale_gp_params, X_inducing, latent_log_scale, x, return_cov=False)).squeeze()
 
     def predict_scale(self, x):
         f = jax.vmap(self.predict_scale_per_dim, in_axes=(None, 1, 0, 1))
@@ -34,7 +34,7 @@ class GibbsKernel(Kernel):
                 x,
                 return_cov=False,
             )
-        )
+        ).squeeze()
 
     def _compute_pair(self, x1, x2):
         if self.flex_scale:
@@ -72,9 +72,6 @@ class GibbsKernel(Kernel):
     def _compute_elwise(self, x1, x2):
         f = jax.vmap(self._compute_pair, in_axes=(0, 0))
         return f(x1, x2)
-
-
-# It remains to implement pairwise and element-wise computation of the kernel.
 
 
 @pairwise.dispatch

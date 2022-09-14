@@ -1,5 +1,6 @@
 import jax
 import jax.numpy as jnp
+import jax.tree_util as tree_util
 
 import tensorflow_probability.substrates.jax as tfp
 
