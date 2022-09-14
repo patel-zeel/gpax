@@ -1,0 +1,7 @@
+__pycache__/
+*.vscode
+*.ipynb_checkpoints
+*.pyc
+*.egg-info/
+__pycache__
+gpax/_version.py
