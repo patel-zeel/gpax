@@ -1,46 +1,39 @@
 import jax
 import jax.numpy as jnp
 
-import optax
-
-import matplotlib.pyplot as plt
-
-import tensorflow_probability.substrates.jax as tfp
-
-tfd = tfp.distributions
-
-from gpax import ExactGP, SparseGP, RBFKernel, HomoscedasticNoise, ConstantMean
-from gpax.utils import constrain, unconstrain, randomize, train_fn
-from gpax.plotting import plot_posterior
-
-import lab.jax as B
-
-import pprint
-
-pp = pprint.PrettyPrinter(depth=4)
-
-X = jnp.linspace(-1, 1, 100).reshape(-1, 1)
-# X = jnp.concatenate([X[:40], X[60:]])
-key = jax.random.PRNGKey(0)
-y = jnp.sin(2 * jnp.pi * X) + jax.random.normal(key, X.shape) * 0.2
-
-plt.scatter(X, y)
-
-## Exact GP
-
-model = ExactGP(kernel=RBFKernel(), noise=HomoscedasticNoise(), mean=ConstantMean())
+from gpax import GibbsKernel
+from gpax.utils import randomize, constrain, unconstrain
+from gpflex.core.kernels import FlexKernel
+from tinygp import GaussianProcess, kernels, transforms
 
 
-def loss_fun(params):
-    return -model.log_probability(params, X, y)
+X = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
+y = jax.random.normal(jax.random.PRNGKey(1), (5,))
+
+X_inducing = X[:2]
+print(X.shape, X_inducing.shape)
+
+gkernel = GibbsKernel(X_inducing=X_inducing)
+params = gkernel.initialise_params(key=jax.random.PRNGKey(0), X_inducing=X_inducing)
+bijectors = gkernel.get_bijectors()
+params = unconstrain(params, bijectors)
+# params = randomize(params, key=jax.random.PRNGKey(1))
+cons_params = constrain(params, bijectors)
 
 
-key = jax.random.PRNGKey(123)
-params = model.initialise_params(key, X)
-pp.pprint(params)
+gp = GaussianProcess(
+    kernel=cons_params["kernel"]["variance_gp"]["kernel"]["variance"].squeeze()
+    * transforms.Linear(
+        1 / cons_params["kernel"]["variance_gp"]["kernel"]["lengthscale"].squeeze(), kernels.ExpSquared(scale=1.0)
+    ),
+    X=cons_params["kernel"]["X_inducing"],
+    diag=cons_params["kernel"]["variance_gp"]["noise"]["variance"].squeeze(),
+)
+new = gp.condition(cons_params["kernel"]["latent_log_variance"], X).gp
+print(new.mean)
 
-bijectors = model.get_bijectors()
-pp.pprint(bijectors)
+print(gkernel(cons_params)(X, X))
 
-params = model.initialise_params(key, X)
-jax.grad(loss_fun)(params)
+fkernel = FlexKernel(latent_x=X_inducing)
+print(fkernel(X, X))
+pass

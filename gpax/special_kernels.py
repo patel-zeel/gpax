@@ -30,12 +30,13 @@ class GibbsKernel(Kernel):
                 x1 = x1 / l_avg
                 x2 = x2 / l_avg
             else:
-                lengthscale = self.params["lengthscale"]
+                lengthscale = params["kernel"]["lengthscale"]
                 x1 = x1 / lengthscale
                 x2 = x2 / lengthscale
                 prefix_part = 1.0
 
-            exp_part = jnp.exp(-0.5 * ((x1 - x2) ** 2).sum())
+            sqr_dist = ((x1 - x2) ** 2).sum()
+            exp_part = jnp.exp(-0.5 * sqr_dist)
 
             if self.flex_variance:
                 predict_fn = jax.jit(tree_util.Partial(self.predict_var, params=params))
@@ -43,20 +44,21 @@ class GibbsKernel(Kernel):
                 var2 = predict_fn(x=x2)
                 variance_part = var1 * var2
             else:
-                variance_part = self.params["variance"]
+                variance_part = params["kernel"]["variance"]
 
             return (variance_part * prefix_part * exp_part).squeeze()
 
         return kernel_fn
 
     @staticmethod
-    def predict_scale_per_dim(x, X_inducing, scale_gp_params, latent_log_scale):
+    def predict_scale_per_dim(x, X_inducing, scale_gp_params, latent_log_scale, params):
+        x = x.reshape(1, -1)
+        X_inducing = X_inducing.reshape(-1, 1)
         scale_gp = ExactGP(kernel=RBFKernel(active_dims=[0]))
-        return jnp.exp(
-            scale_gp.predict(
-                scale_gp_params, X_inducing.reshape(-1, 1), latent_log_scale, x.reshape(-1, 1), return_cov=False
-            )
-        ).squeeze()
+        # latent_cov = scale_gp.kernel(params["scale_gp"])(X_inducing, X_inducing)
+        # latent_cov = latent_cov + jnp.eye(X_inducing.shape[0]) * 1e-6
+        # latent_log_scale = jnp.linalg.cholesky(latent_cov) @ latent_log_scale
+        return jnp.exp(scale_gp.predict(scale_gp_params, X_inducing, latent_log_scale, x, return_cov=False)).squeeze()
 
     def predict_scale(self, params, x):
         if self.X_inducing is not None:
@@ -64,8 +66,8 @@ class GibbsKernel(Kernel):
         else:
             X_inducing = params["X_inducing"]
         params = params["kernel"]
-        f = jax.vmap(self.predict_scale_per_dim, in_axes=(None, 1, 0, 1))
-        return f(x, X_inducing, params["scale_gp"], params["latent_log_scale"])
+        f = jax.vmap(self.predict_scale_per_dim, in_axes=(None, 1, 0, 1, None))
+        return f(x, X_inducing, params["scale_gp"], params["latent_log_scale"], params)
 
     def predict_var(self, params, x):
         x = x.reshape(1, -1)
@@ -74,8 +76,11 @@ class GibbsKernel(Kernel):
         else:
             X_inducing = params["X_inducing"]
         params = params["kernel"]
-        variance_gp = ExactGP(kernel=RBFKernel(active_dims=list(range(x.shape[1]))))
-        return jnp.exp(
+        variance_gp = ExactGP(kernel=RBFKernel(active_dims=list(range(X_inducing.shape[1]))))
+        # latent_cov = variance_gp.kernel(params["variance_gp"])(X_inducing, X_inducing)
+        # latent_cov = latent_cov + jnp.eye(X_inducing.shape[0]) * 1e-6
+        # latent_log_variance = jnp.linalg.cholesky(latent_cov) @ params["latent_log_variance"]
+        res = jnp.exp(
             variance_gp.predict(
                 params["variance_gp"],
                 X_inducing,
@@ -84,6 +89,8 @@ class GibbsKernel(Kernel):
                 return_cov=False,
             )
         ).squeeze()
+        # jax.debug.print("{res}", res=res)
+        return res
 
     def __initialise_params__(self, key, X_inducing=None):
         params = {}

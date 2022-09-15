@@ -31,7 +31,9 @@ class Kernel(Base):
     def select(self, kernel_fn):
         def _select(X1, X2):
             # print(X1.shape, X2.shape)
-            return kernel_fn(X1[:, self.active_dims], X2[:, self.active_dims])
+            X1 = X1[:, self.active_dims]
+            X2 = X2[:, self.active_dims]
+            return kernel_fn(X1, X2)
 
         return _select
 
@@ -120,7 +122,7 @@ class RBFKernel(SmoothKernel):
             X1 = X1 / params["lengthscale"]
             X2 = X2 / params["lengthscale"]
             exp_part = jnp.exp(-0.5 * squared_distance(X1, X2))
-            return params["variance"] * exp_part
+            return (params["variance"] * exp_part).squeeze()
 
         return _kernel_fn
 
@@ -139,7 +141,7 @@ class Matern12Kernel(SmoothKernel):
             X1 = X1 / params["lengthscale"]
             X2 = X2 / params["lengthscale"]
             exp_part = jnp.exp(-distance(X1, X2))
-            return params["variance"] * exp_part
+            return (params["variance"] * exp_part).squeeze()
 
         return _kernel_fn
 
@@ -155,7 +157,7 @@ class Matern32Kernel(SmoothKernel):
             X2 = X2 / params["lengthscale"]
             arg = jnp.sqrt(3.0) * distance(X1, X2)
             exp_part = (1.0 + arg) * jnp.exp(-arg)
-            return params["variance"] * exp_part
+            return (params["variance"] * exp_part).squeeze()
 
         return _kernel_fn
 
@@ -171,7 +173,7 @@ class Matern52Kernel(SmoothKernel):
             X2 = X2 / params["lengthscale"]
             arg = jnp.sqrt(5.0) * distance(X1, X2)
             exp_part = (1 + arg + jnp.square(arg) / 3) * jnp.exp(-arg)
-            return params["variance"] * exp_part
+            return (params["variance"] * exp_part).squeeze()
 
         return _kernel_fn
 
@@ -187,7 +189,7 @@ class PolynomialKernel(SmoothKernel):
         def _kernel_fn(X1, X2):
             X1 = X1 / params["lengthscale"]
             X2 = X2 / params["lengthscale"]
-            return (X1 @ X2 + params["variance"]) ** self.order
+            return ((X1 @ X2 + params["variance"]) ** self.order).squeeze()
 
         return _kernel_fn
 

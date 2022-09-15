@@ -75,16 +75,16 @@ class ExactGP(AbstractGP):
         L = jnp.linalg.cholesky(noisy_covariance)
         alpha = jsp.linalg.cho_solve((L, True), y_bar)
         K_star = kernel(X_test, X)
-        mean = K_star @ alpha + mean
+        pred_mean = K_star @ alpha + mean
 
         if return_cov:
             v = jsp.linalg.cho_solve((L, True), K_star.T)
-            cov = kernel(X_test, X_test) - K_star @ v
+            pred_cov = kernel(X_test, X_test) - K_star @ v
             if include_noise:
-                cov = self.add_noise(cov, self.noise(params, X_test))
-            return mean, cov
+                pred_cov = self.add_noise(pred_cov, self.noise(params, X_test))
+            return pred_mean, pred_cov
         else:
-            return mean
+            return pred_mean
 
     def __initialise_params__(self, key, X, X_inducing):
         return {}  # No additional parameters to initialise.
