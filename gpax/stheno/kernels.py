@@ -18,7 +18,11 @@ class GibbsKernel(Kernel):
     @staticmethod
     def predict_scale_per_dim(x, X_inducing, scale_gp_params, latent_log_scale):
         scale_gp = ExactGP()
-        return B.exp(scale_gp.predict(scale_gp_params, X_inducing, latent_log_scale, x, return_cov=False)).squeeze()
+        return B.exp(
+            scale_gp.predict(
+                scale_gp_params, X_inducing.reshape(-1, 1), latent_log_scale, x.reshape(-1, 1), return_cov=False
+            )
+        ).squeeze()
 
     def predict_scale(self, x):
         f = jax.vmap(self.predict_scale_per_dim, in_axes=(None, 1, 0, 1))

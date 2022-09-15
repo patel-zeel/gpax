@@ -1,7 +1,16 @@
 import jax
+import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
 import jax.tree_util as tree_util
 import optax
+
+
+def squared_distance(X1, X2):
+    return jnp.square(X1 - X2).sum()
+
+
+def distance(X1, X2):
+    return jnp.sqrt(squared_distance(X1, X2))
 
 
 def randomize(params, key):

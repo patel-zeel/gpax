@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 
 import pytest
-from gpax import RBFKernel, Matern12Kernel, Matern32Kernel, Matern52Kernel, LinearKernel, GibbsKernel
+from gpax import RBFKernel, Matern12Kernel, Matern32Kernel, Matern52Kernel, PolynomialKernel, GibbsKernel
 from gpax.utils import constrain
 from tests.utils import assert_same_pytree
 
@@ -14,7 +14,7 @@ import tensorflow_probability.substrates.jax as tfp
 tfb = tfp.bijectors
 
 
-@pytest.mark.parametrize("kernel_fn", [RBFKernel, Matern12Kernel, Matern32Kernel, Matern52Kernel])
+@pytest.mark.parametrize("kernel_fn", [RBFKernel, Matern12Kernel, Matern32Kernel, Matern52Kernel, PolynomialKernel])
 @pytest.mark.parametrize(
     "kernel_params", [{"lengthscale": 0.5, "variance": 0.7}, {"lengthscale": None, "variance": None}]
 )
@@ -35,15 +35,18 @@ def test_initialize(kernel_fn, kernel_params):
 
 
 def test_combinations():
-    X = jax.random.normal(jax.random.PRNGKey(0), (10, 1))
-    kernel = (RBFKernel(lengthscale=0.1, variance=0.2) * Matern12Kernel(lengthscale=0.3, variance=0.4)) * LinearKernel(
-        variance=0.5
-    )
-    kernel_stheno = ((0.2 * EQ().stretch(0.1)) * (0.4 * Matern12().stretch(0.3))) * (0.5 * Linear())
+    X = jax.random.normal(jax.random.PRNGKey(0), (3, 1))
+    kernel = (
+        RBFKernel(lengthscale=0.1, variance=0.2) * Matern12Kernel(lengthscale=0.3, variance=0.4)
+    ) * PolynomialKernel(lengthscale=1.0, variance=0.5)
+    kernel_stheno = ((0.2 * EQ().stretch(0.1)) * (0.4 * Matern12().stretch(0.3))) * (0.5 + Linear())
 
     params = kernel.initialise_params(key=jax.random.PRNGKey(0), X=X)
 
-    assert jnp.allclose(B.dense(kernel(params)(X, X)), B.dense(kernel_stheno(X, X)))
+    ours = kernel(params)(X, X)
+    stheno_vals = kernel_stheno(X, X)
+
+    assert jnp.allclose(ours, B.dense(stheno_vals))
 
 
 def test_gibbs_kernel_dry_run():
@@ -58,7 +61,7 @@ def test_gibbs_kernel_dry_run():
 
 def test_gibbs_combinations():
     X_inducing = jax.random.normal(jax.random.PRNGKey(0), (3, 2))
-    kernel = (RBFKernel() + GibbsKernel(X_inducing=X_inducing)) * LinearKernel()
+    kernel = (RBFKernel() + GibbsKernel(X_inducing=X_inducing)) * PolynomialKernel()
 
     params = kernel.initialise_params(key=jax.random.PRNGKey(0), X_inducing=X_inducing)
     bijectrors = kernel.get_bijectors()

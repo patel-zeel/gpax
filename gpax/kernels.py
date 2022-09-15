@@ -6,22 +6,11 @@ import tensorflow_probability.substrates.jax as tfp
 
 tfb = tfp.bijectors
 
-from stheno import (
-    EQ as _EQStheno,
-    Matern12 as _Matern12Stheno,
-    Matern32 as _Matern32Stheno,
-    Matern52 as _Matern52Stheno,
-    Linear as _LinearStheno,
-)
-
 from typing import List, Union
 from jaxtyping import Array
 from chex import dataclass
 from gpax.base import Base
-
-import lab.jax as B
-
-from plum import dispatch
+from gpax.utils import squared_distance, distance
 
 
 @dataclass
@@ -32,18 +21,26 @@ class Kernel(Base):
     def __call__(self, params):
         if self.active_dims is None:
             raise ValueError(
-                "active_dims must not be None. It is set automaically on calling _initialise_params() or must be specified manually."
+                "active_dims must not be None. It is set automatically on calling _initialise_params() or must be specified manually."
             )
-        return self.call(params).select(self.active_dims)
+        kernel_fn = self.call(params)
+        kernel_fn = jax.vmap(kernel_fn, in_axes=(None, 0))
+        kernel_fn = jax.vmap(kernel_fn, in_axes=(0, None))
+        return self.select(kernel_fn)
+
+    def select(self, kernel_fn):
+        def _select(X1, X2):
+            # print(X1.shape, X2.shape)
+            return kernel_fn(X1[:, self.active_dims], X2[:, self.active_dims])
+
+        return _select
 
     def initialise_params(self, key, X=None, X_inducing=None):
         if X is not None:
-            X = B.uprank(X)
             if self.active_dims is None:
                 self.active_dims = list(range(X.shape[1]))
             assert set(self.active_dims) - set(range(X.shape[1])) == set(), "active_dims must be a subset of X.shape[1]"
         if X_inducing is not None:
-            X_inducing = B.uprank(X_inducing)
             if self.active_dims is None:
                 self.active_dims = list(range(X_inducing.shape[1]))
             assert (
@@ -78,8 +75,7 @@ class SmoothKernel(Kernel):
 
     def call(self, params):
         params = params["kernel"]
-        kernel = params["variance"] * self.kernel.stretch(params["lengthscale"])
-        return kernel
+        return self.get_kernel_fn(params)
 
     def __initialise_params__(self, key, X):
         params = {}
@@ -119,8 +115,14 @@ class SmoothKernel(Kernel):
 
 @dataclass
 class RBFKernel(SmoothKernel):
-    def __post_init__(self):
-        self.kernel = _EQStheno()
+    def get_kernel_fn(self, params):
+        def _kernel_fn(X1, X2):
+            X1 = X1 / params["lengthscale"]
+            X2 = X2 / params["lengthscale"]
+            exp_part = jnp.exp(-0.5 * squared_distance(X1, X2))
+            return params["variance"] * exp_part
+
+        return _kernel_fn
 
     def __repr__(self) -> str:
         return "RBF"
@@ -132,8 +134,14 @@ SquaredExpKernel = RBFKernel
 
 @dataclass
 class Matern12Kernel(SmoothKernel):
-    def __post_init__(self):
-        self.kernel = _Matern12Stheno()
+    def get_kernel_fn(self, params):
+        def _kernel_fn(X1, X2):
+            X1 = X1 / params["lengthscale"]
+            X2 = X2 / params["lengthscale"]
+            exp_part = jnp.exp(-distance(X1, X2))
+            return params["variance"] * exp_part
+
+        return _kernel_fn
 
     def __repr__(self) -> str:
         return "Matern12"
@@ -141,8 +149,15 @@ class Matern12Kernel(SmoothKernel):
 
 @dataclass
 class Matern32Kernel(SmoothKernel):
-    def __post_init__(self):
-        self.kernel = _Matern32Stheno()
+    def get_kernel_fn(self, params):
+        def _kernel_fn(X1, X2):
+            X1 = X1 / params["lengthscale"]
+            X2 = X2 / params["lengthscale"]
+            arg = jnp.sqrt(3.0) * distance(X1, X2)
+            exp_part = (1.0 + arg) * jnp.exp(-arg)
+            return params["variance"] * exp_part
+
+        return _kernel_fn
 
     def __repr__(self) -> str:
         return "Matern32"
@@ -150,33 +165,34 @@ class Matern32Kernel(SmoothKernel):
 
 @dataclass
 class Matern52Kernel(SmoothKernel):
-    def __post_init__(self):
-        self.kernel = _Matern52Stheno()
+    def get_kernel_fn(self, params):
+        def _kernel_fn(X1, X2):
+            X1 = X1 / params["lengthscale"]
+            X2 = X2 / params["lengthscale"]
+            arg = jnp.sqrt(5.0) * distance(X1, X2)
+            exp_part = (1 + arg + jnp.square(arg) / 3) * jnp.exp(-arg)
+            return params["variance"] * exp_part
+
+        return _kernel_fn
 
     def __repr__(self) -> str:
         return "Matern52"
 
 
 @dataclass
-class LinearKernel(Kernel):
-    variance: Union[float, Array] = 1.0
+class PolynomialKernel(SmoothKernel):
+    order: float = 1.0
 
-    def call(self, params):
-        params = params["kernel"]
-        kernel = params["variance"] * _LinearStheno()
-        return kernel
+    def get_kernel_fn(self, params):
+        def _kernel_fn(X1, X2):
+            X1 = X1 / params["lengthscale"]
+            X2 = X2 / params["lengthscale"]
+            return (X1 @ X2 + params["variance"]) ** self.order
 
-    def __initialise_params__(self, key, X):
-        if self.variance is not None:
-            return {"variance": self.variance}
-        else:
-            return {"variance": jnp.array(1.0)}
-
-    def __get_bijectors__(self):
-        return {"variance": tfb.Exp()}
+        return _kernel_fn
 
     def __repr__(self) -> str:
-        return "Linear"
+        return "Polynomial"
 
 
 @dataclass
@@ -190,14 +206,23 @@ class MathOperationKernel(Kernel):
 
     def call(self, params):
         params = params["kernel"]
-        return self.function(self.k1(params["k1"]), self.k2(params["k2"]))
+
+        def kernel_fn(X1, X2):
+            k1 = self.k1.call(params["k1"])(X1, X2)
+            k2 = self.k2.call(params["k2"])(X1, X2)
+            return self.function(k1, k2)
+
+        return kernel_fn
 
     def __call__(self, params):  # Override to allow for different active_dims
         if self.active_dims is None:
             raise ValueError(
                 "active_dims must not be None. It is set automatically on calling initialise_params() or must be specified manually."
             )
-        return self.call(params)
+        kernel_fn = self.call(params)
+        kernel_fn = jax.vmap(kernel_fn, in_axes=(None, 0))
+        kernel_fn = jax.vmap(kernel_fn, in_axes=(0, None))
+        return kernel_fn
 
     def subkernel_initialise(self, kernel, key, X, X_inducing):
         if kernel.__class__.__name__ in ["SumKernel", "ProductKernel"]:

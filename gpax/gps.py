@@ -1,4 +1,6 @@
 import jax
+import jax.numpy as jnp
+import jax.scipy as jsp
 from gpax.kernels import Kernel, RBFKernel
 from gpax.noises import Noise, HomoscedasticNoise
 from gpax.means import Mean, ConstantMean
@@ -8,8 +10,6 @@ import tensorflow_probability.substrates.jax as tfp
 tfd = tfp.distributions
 tfb = tfp.bijectors
 
-from stheno.jax import GP as _GPStheno, PseudoObs, PseudoObsFITC, PseudoObsDTC
-import lab.jax as B
 from jaxtyping import Array
 from chex import dataclass
 
@@ -19,24 +19,6 @@ class AbstractGP:
     kernel: Kernel = RBFKernel()
     noise: Noise = HomoscedasticNoise()
     mean: Mean = ConstantMean()
-
-    def get_gp(self, params):
-        mean = self.mean(params)
-        kernel = self.kernel(params)
-        return _GPStheno(mean, kernel)
-
-    def return_posterior(self, params, f, obs, X_test, return_cov=True, include_noise=True):
-        posterior = f | obs
-        if include_noise:
-            post_pred = posterior(X_test, self.noise(params, X_test))
-        else:
-            post_pred = posterior(X_test)
-        post_mean = B.dense(post_pred.mean)
-        if return_cov:
-            post_cov = B.dense(post_pred.var)
-            return post_mean, post_cov
-        else:
-            return post_mean
 
     def initialise_params(self, key, X, X_inducing=None):
         keys = jax.random.split(key, 4)
@@ -71,16 +53,38 @@ class AbstractGP:
 
 @dataclass
 class ExactGP(AbstractGP):
+    def add_noise(self, K, noise):
+        rows, columns = jnp.diag_indices_from(K)
+        return K.at[rows, columns].set(K[rows, columns] + noise)
+
     def log_probability(self, params, X, y):
-        gp = self.get_gp(params)
         noise = self.noise(params, X)
-        return gp(X, noise).logpdf(y)
+        mean = self.mean(params)
+        kernel = self.kernel(params)
+        covariance = kernel(X, X)
+        noisy_covariance = self.add_noise(covariance, noise)
+        # marginal = tfd.MultivariateNormalTriL(loc=mean, scale_tril=jnp.linalg.cholesky(noisy_covariance))
+        marginal = tfd.MultivariateNormalFullCovariance(loc=mean, covariance_matrix=noisy_covariance)
+        return marginal.log_prob(y)
 
     def predict(self, params, X, y, X_test, return_cov=True, include_noise=True):
-        gp = self.get_gp(params)
-        train_noise = self.noise(params, X)
-        obs = (gp(X, train_noise), y)
-        return self.return_posterior(params, gp, obs, X_test, return_cov, include_noise)
+        mean = self.mean(params)
+        kernel = self.kernel(params)
+        y_bar = y - mean
+        noisy_covariance = self.add_noise(kernel(X, X), self.noise(params, X))
+        L = jnp.linalg.cholesky(noisy_covariance)
+        alpha = jsp.linalg.cho_solve((L, True), y_bar)
+        K_star = kernel(X_test, X)
+        mean = K_star @ alpha + mean
+
+        if return_cov:
+            v = jsp.linalg.cho_solve((L, True), K_star.T)
+            cov = kernel(X_test, X_test) - K_star @ v
+            if include_noise:
+                cov = self.add_noise(cov, self.noise(params, X_test))
+            return mean, cov
+        else:
+            return mean
 
     def __initialise_params__(self, key, X, X_inducing):
         return {}  # No additional parameters to initialise.

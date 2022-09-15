@@ -8,11 +8,8 @@ tfb = tfp.bijectors
 
 from jaxtyping import Array
 from chex import dataclass
-from gpax.stheno.kernels import GibbsKernel as GibbsKernelStheno
 from gpax.gps import ExactGP
-from gpax.kernels import Kernel
-
-import lab.jax as B
+from gpax.kernels import Kernel, RBFKernel
 
 
 @dataclass
@@ -21,25 +18,72 @@ class GibbsKernel(Kernel):
     flex_scale: bool = True
     flex_variance: bool = True
 
-    def __post_init__(self):
-        if self.X_inducing is not None:
-            self.X_inducing = B.uprank(self.X_inducing)
-
     def call(self, params):
+        def kernel_fn(x1, x2):
+            if self.flex_scale:
+                predict_fn = jax.jit(tree_util.Partial(self.predict_scale, params=params))
+                l1 = predict_fn(x=x1)
+                l2 = predict_fn(x=x2)
+                l_avg_square = (l1**2 + l2**2) / 2.0
+                l_avg = jnp.sqrt(l_avg_square)
+                prefix_part = jnp.sqrt(l1 * l2 / l_avg_square).prod()
+                x1 = x1 / l_avg
+                x2 = x2 / l_avg
+            else:
+                lengthscale = self.params["lengthscale"]
+                x1 = x1 / lengthscale
+                x2 = x2 / lengthscale
+                prefix_part = 1.0
+
+            exp_part = jnp.exp(-0.5 * ((x1 - x2) ** 2).sum())
+
+            if self.flex_variance:
+                predict_fn = jax.jit(tree_util.Partial(self.predict_var, params=params))
+                var1 = predict_fn(x=x1)
+                var2 = predict_fn(x=x2)
+                variance_part = var1 * var2
+            else:
+                variance_part = self.params["variance"]
+
+            return (variance_part * prefix_part * exp_part).squeeze()
+
+        return kernel_fn
+
+    @staticmethod
+    def predict_scale_per_dim(x, X_inducing, scale_gp_params, latent_log_scale):
+        scale_gp = ExactGP(kernel=RBFKernel(active_dims=[0]))
+        return jnp.exp(
+            scale_gp.predict(
+                scale_gp_params, X_inducing.reshape(-1, 1), latent_log_scale, x.reshape(-1, 1), return_cov=False
+            )
+        ).squeeze()
+
+    def predict_scale(self, params, x):
         if self.X_inducing is not None:
             X_inducing = params["kernel"]["X_inducing"]
         else:
             X_inducing = params["X_inducing"]
-        kernel = GibbsKernelStheno(
-            X_inducing=X_inducing, flex_scale=self.flex_scale, flex_variance=self.flex_variance, params=params["kernel"]
-        )
-        return kernel
-
-    def predict_scale(self, params, x):
-        return self.call(params).predict_scale(x)
+        params = params["kernel"]
+        f = jax.vmap(self.predict_scale_per_dim, in_axes=(None, 1, 0, 1))
+        return f(x, X_inducing, params["scale_gp"], params["latent_log_scale"])
 
     def predict_var(self, params, x):
-        return self.call(params).predict_var(x)
+        x = x.reshape(1, -1)
+        if self.X_inducing is not None:
+            X_inducing = params["kernel"]["X_inducing"]
+        else:
+            X_inducing = params["X_inducing"]
+        params = params["kernel"]
+        variance_gp = ExactGP(kernel=RBFKernel(active_dims=list(range(x.shape[1]))))
+        return jnp.exp(
+            variance_gp.predict(
+                params["variance_gp"],
+                X_inducing,
+                params["latent_log_variance"],
+                x,
+                return_cov=False,
+            )
+        ).squeeze()
 
     def __initialise_params__(self, key, X_inducing=None):
         params = {}
@@ -53,7 +97,7 @@ class GibbsKernel(Kernel):
             keys = jax.random.split(key, X_inducing.shape[1])
 
             def initialize_per_dim(key, x_inducing):
-                return ExactGP().initialise_params(key, x_inducing)
+                return ExactGP().initialise_params(key, x_inducing.reshape(-1, 1))
 
             params["scale_gp"] = jax.vmap(initialize_per_dim, in_axes=(0, 1))(keys, X_inducing)
             params["latent_log_scale"] = jnp.zeros(X_inducing.shape)
