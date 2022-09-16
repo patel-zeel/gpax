@@ -53,9 +53,11 @@ class AbstractGP:
 
 @dataclass
 class ExactGP(AbstractGP):
+    jitter: float = 1e-3
+
     def add_noise(self, K, noise):
         rows, columns = jnp.diag_indices_from(K)
-        return K.at[rows, columns].set(K[rows, columns] + noise)
+        return K.at[rows, columns].set(K[rows, columns] + noise + self.jitter)
 
     def log_probability(self, params, X, y):
         noise = self.noise(params, X)
