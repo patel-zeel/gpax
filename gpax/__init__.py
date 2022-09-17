@@ -12,3 +12,5 @@ from gpax.noises import HomoscedasticNoise
 from gpax.means import ConstantMean
 from gpax.special_kernels import GibbsKernel
 from gpax.special_noises import HeteroscedasticNoise
+
+print("imported nosthenogpax version")
