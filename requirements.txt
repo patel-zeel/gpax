@@ -2,4 +2,4 @@ jax
 jaxlib
 chex
 numpy
-git@https://github.com/patel-zeel/stheno.git
+# git@https://github.com/patel-zeel/stheno.git

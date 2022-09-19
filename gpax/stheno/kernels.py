@@ -1,5 +1,5 @@
 import jax
-
+import jax.numpy as jnp
 import lab.jax as B
 from matrix import Dense
 from plum import dispatch
@@ -16,21 +16,32 @@ class GibbsKernel(Kernel):
         self.params = params
 
     @staticmethod
-    def predict_scale_per_dim(x, X_inducing, scale_gp_params, latent_log_scale):
+    def predict_scale_per_dim(x, X_inducing, scale_gp_params, inducing_std_scale):
+        X_inducing = B.uprank(X_inducing)
         scale_gp = ExactGP()
+        covar = B.dense(scale_gp.kernel(scale_gp_params)(X_inducing, X_inducing))
+        covar += jnp.eye(covar.shape[0]) * scale_gp_params["noise"]["variance"]
+        latent_log_scale = scale_gp_params["mean"]["value"] + jnp.linalg.cholesky(covar) @ inducing_std_scale
         return B.exp(scale_gp.predict(scale_gp_params, X_inducing, latent_log_scale, x, return_cov=False)).squeeze()
 
     def predict_scale(self, x):
         f = jax.vmap(self.predict_scale_per_dim, in_axes=(None, 1, 0, 1))
-        return f(x, self.X_inducing, self.params["scale_gp"], self.params["latent_log_scale"])
+        # print(jax.tree_util.tree_map(lambda x: x.shape, self.params["scale_gp"]))
+        return f(x, self.X_inducing, self.params["scale_gp"], self.params["inducing_std_scale"])
 
     def predict_var(self, x):
         variance_gp = ExactGP()
+        covar = B.dense(variance_gp.kernel(self.params["variance_gp"])(self.X_inducing, self.X_inducing))
+        covar += jnp.eye(covar.shape[0]) * self.params["variance_gp"]["noise"]["variance"]
+        latent_log_variance = (
+            self.params["variance_gp"]["mean"]["value"]
+            + jnp.linalg.cholesky(covar) @ self.params["inducing_std_variance"]
+        )
         return B.exp(
             variance_gp.predict(
                 self.params["variance_gp"],
                 self.X_inducing,
-                self.params["latent_log_variance"],
+                latent_log_variance,
                 x,
                 return_cov=False,
             )

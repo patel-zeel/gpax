@@ -106,7 +106,7 @@ class SparseGP(AbstractGP):
         train_noise = self.noise(params, X)
         return self.pseudo_obs[self.method](f(params["X_inducing"]), f(X, train_noise), y)
 
-    def elbo(self, params, X, y):
+    def log_probability(self, params, X, y):
         f = self.get_gp(params)
         pseudo_obs = self.get_pseudo_obs(params, f, X, y)
         elbo = pseudo_obs.elbo(f.measure)

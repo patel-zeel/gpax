@@ -43,47 +43,41 @@ class GibbsKernel(Kernel):
 
     def __initialise_params__(self, key, X_inducing=None):
         params = {}
-        if self.flex_scale:
-            if self.X_inducing is not None:  # Ignore X_inducing if self.X_inducing is given
-                X_inducing = self.X_inducing
-                params["X_inducing"] = X_inducing
-            else:
-                assert X_inducing is not None, "X_inducing must not be None if self.X_inducing is None"
 
+        if self.X_inducing is not None:  # Ignore X_inducing if self.X_inducing is given
+            X_inducing = self.X_inducing
+            params["X_inducing"] = X_inducing
+
+        if self.flex_scale:
             keys = jax.random.split(key, X_inducing.shape[1])
 
             def initialize_per_dim(key, x_inducing):
                 return ExactGP().initialise_params(key, x_inducing)
 
             params["scale_gp"] = jax.vmap(initialize_per_dim, in_axes=(0, 1))(keys, X_inducing)
-            params["latent_log_scale"] = jnp.zeros(X_inducing.shape)
+            params["inducing_std_scale"] = jnp.zeros(X_inducing.shape)
         else:
             params["lengthscale"] = jnp.array(1.0)
         if self.flex_variance:
-            if self.X_inducing is not None:
-                X_inducing = self.X_inducing
-                params["X_inducing"] = X_inducing
             key = jax.random.split(key, 1)[0]
             params["variance_gp"] = ExactGP().initialise_params(key, X_inducing)
-            params["latent_log_variance"] = jnp.zeros(X_inducing.shape[0])
+            params["inducing_std_variance"] = jnp.zeros(X_inducing.shape[0])
         else:
             params["variance"] = jnp.array(1.0)
         return params
 
     def __get_bijectors__(self):
         bijectors = {}
+        if self.X_inducing is not None:
+            bijectors["X_inducing"] = tfb.Identity()
         if self.flex_scale:
-            if self.X_inducing is not None:
-                bijectors["X_inducing"] = tfb.Identity()
             bijectors["scale_gp"] = ExactGP().get_bijectors()
-            bijectors["latent_log_scale"] = tfb.Identity()
+            bijectors["inducing_std_scale"] = tfb.Identity()
         else:
             bijectors["lengthscale"] = tfb.Exp()
         if self.flex_variance:
-            if self.X_inducing is not None:
-                bijectors["X_inducing"] = tfb.Identity()
             bijectors["variance_gp"] = ExactGP().get_bijectors()
-            bijectors["latent_log_variance"] = tfb.Identity()
+            bijectors["inducing_std_variance"] = tfb.Identity()
         else:
             bijectors["variance"] = tfb.Exp()
         return bijectors
