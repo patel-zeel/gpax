@@ -73,8 +73,8 @@ class Kernel(Base):
 
 @dataclass
 class SmoothKernel(Kernel):
-    lengthscale: Union[float, List[float], Array] = 1.0
-    variance: Union[float, Array] = 1.0
+    lengthscale: Union[float, List[float], Array] = None
+    variance: Union[float, Array] = None
 
     def call(self, params):
         params = params["kernel"]
@@ -93,7 +93,7 @@ class SmoothKernel(Kernel):
                 else:
                     raise ValueError("lengthscale must be either a scalar or an array of shape (len(active_dims),).")
             else:
-                params["lengthscale"] = jnp.ones((len(self.active_dims),))
+                params["lengthscale"] = jnp.ones((X.shape[1],))
         else:
             if self.lengthscale is not None:
                 lengthscale = jnp.asarray(self.lengthscale)

@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import lab.jax as B
 from matrix import Dense
 from plum import dispatch
-from gpax.gps import ExactGP
+from gpax.gps import ExactGP, RBFKernel
 
 from mlkernels import Kernel, pairwise, elwise
 
@@ -30,7 +30,7 @@ class GibbsKernel(Kernel):
         return f(x, self.X_inducing, self.params["scale_gp"], self.params["inducing_std_scale"])
 
     def predict_var(self, x):
-        variance_gp = ExactGP()
+        variance_gp = ExactGP(kernel=RBFKernel(active_dims=list(range(x.shape[1]))))
         covar = B.dense(variance_gp.kernel(self.params["variance_gp"])(self.X_inducing, self.X_inducing))
         covar += jnp.eye(covar.shape[0]) * self.params["variance_gp"]["noise"]["variance"]
         latent_log_variance = (
@@ -50,8 +50,8 @@ class GibbsKernel(Kernel):
     def _compute_pair(self, x1, x2):
         if self.flex_scale:
             predict_fn = jax.jit(self.predict_scale)
-            l1 = predict_fn(x1)
-            l2 = predict_fn(x2)
+            l1 = predict_fn(x1.reshape(1, -1))
+            l2 = predict_fn(x2.reshape(1, -1))
             l_avg_square = (l1**2 + l2**2) / 2.0
             l_avg = B.sqrt(l_avg_square)
             prefix_part = B.sqrt(l1 * l2 / l_avg_square).prod()
@@ -67,13 +67,13 @@ class GibbsKernel(Kernel):
 
         if self.flex_variance:
             predict_fn = jax.jit(self.predict_var)
-            var1 = predict_fn(x1)
-            var2 = predict_fn(x2)
+            var1 = predict_fn(x1.reshape(1, -1))
+            var2 = predict_fn(x2.reshape(1, -1))
             variance_part = var1 * var2
         else:
             variance_part = self.params["variance"]
-
-        return (variance_part * prefix_part * exp_part).squeeze()
+        value = (variance_part * prefix_part * exp_part).squeeze()
+        return value
 
     def _compute_pairwise(self, x1, x2):
         f = jax.vmap(self._compute_pair, in_axes=(None, 0))
