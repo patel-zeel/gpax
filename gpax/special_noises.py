@@ -29,15 +29,15 @@ class HeteroscedasticNoise(Noise):
         else:
             X_inducing = params["X_inducing"]  # Use X_inducing from a GP (SparseGP, etc.)
 
-        # latent_cov = self.noise_gp.kernel(params["noise"]["noise_gp"])(X_inducing, X_inducing)
-        # latent_cov = latent_cov + jnp.eye(X_inducing.shape[0]) * 1e-6
+        latent_cov = self.noise_gp.kernel(params["noise"]["noise_gp"])(X_inducing, X_inducing)
+        latent_cov = latent_cov + jnp.eye(X_inducing.shape[0]) * jnp.jitter
         # jax.debug.print(
         #     "latent_cov={latent_cov}, X_inducing={X_inducing}", latent_cov=latent_cov, X_inducing=X_inducing
         # )
-        # latent_log_noise = jnp.linalg.cholesky(latent_cov) @ params["noise"]["latent_log_noise"]
+        latent_log_noise = jnp.linalg.cholesky(latent_cov) @ params["noise"]["latent_log_noise"]
         params = params["noise"]
         return jnp.exp(
-            self.noise_gp.predict(params["noise_gp"], X_inducing, params["latent_log_noise"], X, return_cov=False)
+            self.noise_gp.predict(params["noise_gp"], X_inducing, latent_log_noise, X, return_cov=False)
         ).squeeze()  # squeeze is needed to make (n, 1) -> (n,)
 
     def __initialise_params__(self, key, X_inducing):

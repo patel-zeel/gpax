@@ -55,9 +55,9 @@ class GibbsKernel(Kernel):
         x = x.reshape(1, -1)
         X_inducing = X_inducing.reshape(-1, 1)
         scale_gp = ExactGP(kernel=RBFKernel(active_dims=[0]))
-        # latent_cov = scale_gp.kernel(params["scale_gp"])(X_inducing, X_inducing)
-        # latent_cov = latent_cov + jnp.eye(X_inducing.shape[0]) * 1e-6
-        # latent_log_scale = jnp.linalg.cholesky(latent_cov) @ latent_log_scale
+        latent_cov = scale_gp.kernel(params["scale_gp"])(X_inducing, X_inducing)
+        latent_cov = latent_cov + jnp.eye(X_inducing.shape[0]) * jnp.jitter
+        latent_log_scale = jnp.linalg.cholesky(latent_cov) @ latent_log_scale
         return jnp.exp(scale_gp.predict(scale_gp_params, X_inducing, latent_log_scale, x, return_cov=False)).squeeze()
 
     def predict_scale(self, params, x):
@@ -77,14 +77,14 @@ class GibbsKernel(Kernel):
             X_inducing = params["X_inducing"]
         params = params["kernel"]
         variance_gp = ExactGP(kernel=RBFKernel(active_dims=list(range(X_inducing.shape[1]))))
-        # latent_cov = variance_gp.kernel(params["variance_gp"])(X_inducing, X_inducing)
-        # latent_cov = latent_cov + jnp.eye(X_inducing.shape[0]) * 1e-6
-        # latent_log_variance = jnp.linalg.cholesky(latent_cov) @ params["latent_log_variance"]
+        latent_cov = variance_gp.kernel(params["variance_gp"])(X_inducing, X_inducing)
+        latent_cov = latent_cov + jnp.eye(X_inducing.shape[0]) * jnp.jitter
+        latent_log_variance = jnp.linalg.cholesky(latent_cov) @ params["latent_log_variance"]
         res = jnp.exp(
             variance_gp.predict(
                 params["variance_gp"],
                 X_inducing,
-                params["latent_log_variance"],
+                latent_log_variance,
                 x,
                 return_cov=False,
             )
@@ -104,7 +104,8 @@ class GibbsKernel(Kernel):
             keys = jax.random.split(key, X_inducing.shape[1])
 
             def initialize_per_dim(key, x_inducing):
-                return ExactGP().initialise_params(key, x_inducing.reshape(-1, 1))
+                params = ExactGP().initialise_params(key, x_inducing.reshape(-1, 1))
+                return params
 
             params["scale_gp"] = jax.vmap(initialize_per_dim, in_axes=(0, 1))(keys, X_inducing)
             params["latent_log_scale"] = jnp.zeros(X_inducing.shape)

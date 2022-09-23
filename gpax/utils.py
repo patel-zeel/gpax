@@ -27,24 +27,25 @@ def unconstrain(params, bijectors):
     return tree_util.tree_map(lambda param, bijector: bijector.inverse(param), params, bijectors)
 
 
-def train_fn(loss_fn, params, bijectors, optimizer, num_epochs=1):
-    state = optimizer.init(params)
+def train_fn(loss_fn, init_raw_params, optimizer, num_epochs=1):
+    state = optimizer.init(init_raw_params)
 
-    constrained_loss_fn = lambda params: loss_fn(constrain(params, bijectors))
+    # dry run
+    loss_fn(init_raw_params)
 
-    # TODO: jitting this function does not work as of now
-    def step(params_and_state, aux):
-        params, state = params_and_state
-        loss, grads = jax.value_and_grad(constrained_loss_fn)(params)
+    @jax.jit
+    def step(raw_params_and_state, aux):
+        raw_params, state = raw_params_and_state
+        loss, grads = jax.value_and_grad(loss_fn)(raw_params)
         updates, state = optimizer.update(grads, state)
-        params = optax.apply_updates(params, updates)
-        return (params, state), (params, loss)
+        raw_params = optax.apply_updates(raw_params, updates)
+        return (raw_params, state), (raw_params, loss)
 
-    (params, state), (params_history, loss_history) = jax.lax.scan(
-        f=step, init=(params, state), xs=None, length=num_epochs
+    (raw_params, state), (raw_params_history, loss_history) = jax.lax.scan(
+        f=step, init=(init_raw_params, state), xs=None, length=num_epochs
     )
     return {
-        "params": params,
-        "params_history": params_history,
+        "raw_params": raw_params,
+        "raw_params_history": raw_params_history,
         "loss_history": loss_history,
     }

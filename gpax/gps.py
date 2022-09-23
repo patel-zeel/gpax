@@ -53,11 +53,9 @@ class AbstractGP:
 
 @dataclass
 class ExactGP(AbstractGP):
-    jitter: float = 1e-3
-
     def add_noise(self, K, noise):
         rows, columns = jnp.diag_indices_from(K)
-        return K.at[rows, columns].set(K[rows, columns] + noise + self.jitter)
+        return K.at[rows, columns].set(K[rows, columns] + noise + jnp.jitter)
 
     def log_probability(self, params, X, y):
         noise = self.noise(params, X)
@@ -73,7 +71,7 @@ class ExactGP(AbstractGP):
         mean = self.mean(params)
         kernel = self.kernel(params)
         y_bar = y - mean
-        noisy_covariance = self.add_noise(kernel(X, X), self.noise(params, X))
+        noisy_covariance = self.add_noise(kernel(X, X), self.noise(params, X) + jnp.jitter)
         L = jnp.linalg.cholesky(noisy_covariance)
         alpha = jsp.linalg.cho_solve((L, True), y_bar)
         K_star = kernel(X_test, X)
