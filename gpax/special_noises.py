@@ -2,18 +2,32 @@ import jax
 import jax.numpy as jnp
 
 from jaxtyping import Array
+from gpax.kernels import RBFKernel
 
 from gpax.noises import Noise
 from gpax import ExactGP
 from gpax.bijectors import Identity, Exp
+from gpax.distributions import Zero
 
 
 class HeteroscedasticNoise(Noise):
-    def __init__(self, X_inducing=None, use_kernel_inducing=True, latent_log_noise=None):
+    def __init__(
+        self,
+        X_inducing=None,
+        X_inducing_prior=Zero(),
+        use_kernel_inducing=True,
+        latent_log_noise=None,
+        latent_lengthscale_prior=Zero(),
+        latent_variance_prior=Zero(),
+    ):
         self.X_inducing = X_inducing
         self.use_kernel_inducing = use_kernel_inducing
         self.latent_log_noise = latent_log_noise
-        self.noise_gp = ExactGP()
+        self.noise_gp = ExactGP(
+            RBFKernel(lengthscale_prior=latent_lengthscale_prior, variance_prior=latent_variance_prior)
+        )
+        if X_inducing is not None:
+            self.X_inducing_prior = X_inducing_prior
 
     def __call__(self, params, X):
         if self.X_inducing is not None:
@@ -53,3 +67,9 @@ class HeteroscedasticNoise(Noise):
         if self.X_inducing is not None:
             bijectors["X_inducing"] = Identity()
         return bijectors
+
+    def __get_priors__(self):
+        priors = {"noise_gp": self.noise_gp.get_priors(), "latent_log_noise": Zero()}
+        if self.X_inducing is not None:
+            priors["X_inducing"] = self.X_inducing_prior
+        return priors

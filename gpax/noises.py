@@ -3,11 +3,18 @@ import jax.tree_util as tree_util
 
 from gpax.base import Base
 from gpax.bijectors import Exp
+from gpax.distributions import Zero
+from gpax.utils import get_raw_log_prior
 
 
 class Noise(Base):
     def __call__(self, params, X):
         return self.call(params, X)
+
+    def log_prior(self, params, bijectors):
+        params = params["noise"]
+        bijectors = bijectors["noise"]
+        return {"noise": get_raw_log_prior(self.prior, params, bijectors)}
 
     def call(self, params, X):
         raise NotImplementedError("Must be implemented by subclass")
@@ -22,10 +29,14 @@ class Noise(Base):
     def get_bijectors(self):
         return {"noise": self.__get_bijectors__()}
 
+    def get_priors(self):
+        return {"noise": self.__get_priors__()}
+
 
 class HomoscedasticNoise(Noise):
-    def __init__(self, variance=1.0):
+    def __init__(self, variance=1.0, variance_prior=Zero()):
         self.variance = variance
+        self.variance_prior = variance_prior
 
     def call(self, params, X):
         return params["noise"]["variance"]
@@ -35,3 +46,6 @@ class HomoscedasticNoise(Noise):
 
     def __get_bijectors__(self):
         return {"variance": Exp()}
+
+    def __get_priors__(self):
+        return {"variance": self.variance_prior}

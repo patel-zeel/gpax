@@ -6,14 +6,42 @@ from jaxtyping import Array
 from gpax.gps import ExactGP
 from gpax.kernels import Kernel, RBFKernel
 from gpax.bijectors import Identity, Exp
+from gpax.distributions import Zero
 
 
 class GibbsKernel(Kernel):
-    def __init__(self, X_inducing=None, flex_scale=True, flex_variance=True, active_dims=None, ARD=True):
+    def __init__(
+        self,
+        X_inducing=None,
+        flex_scale=True,
+        flex_variance=True,
+        active_dims=None,
+        ARD=True,
+        X_inducing_prior=Zero(),
+        scale_scale_prior=Zero(),
+        scale_sigma_prior=Zero(),
+        variance_scale_prior=Zero(),
+        variance_sigma_prior=Zero(),
+    ):
         super().__init__(active_dims=active_dims, ARD=ARD)
         self.X_inducing = X_inducing
         self.flex_scale = flex_scale
         self.flex_variance = flex_variance
+        self.scale_scale_prior = scale_scale_prior
+        self.scale_sigma_prior = scale_sigma_prior
+        self.variance_scale_prior = variance_scale_prior
+        self.variance_sigma_prior = variance_sigma_prior
+
+        if self.X_inducing is not None:
+            self.prior = {"X_inducing": X_inducing_prior}
+
+        if self.flex_scale:
+            self.scale_gp = ExactGP(RBFKernel(lengthscale_prior=scale_scale_prior, variance_prior=scale_sigma_prior))
+
+        if self.flex_variance:
+            self.variance_gp = ExactGP(
+                RBFKernel(lengthscale_prior=variance_scale_prior, variance_prior=variance_sigma_prior)
+            )
 
     def call(self, params):
         def kernel_fn(x1, x2):
@@ -47,15 +75,15 @@ class GibbsKernel(Kernel):
 
         return kernel_fn
 
-    @staticmethod
-    def predict_scale_per_dim(x, X_inducing, scale_gp_params, latent_log_scale, params):
+    def predict_scale_per_dim(self, x, X_inducing, scale_gp_params, latent_log_scale, params):
         x = x.reshape(1, -1)
         X_inducing = X_inducing.reshape(-1, 1)
-        scale_gp = ExactGP(kernel=RBFKernel(active_dims=[0]))
-        latent_cov = scale_gp.kernel(params["scale_gp"])(X_inducing, X_inducing)
+        latent_cov = self.scale_gp.kernel(params["scale_gp"])(X_inducing, X_inducing)
         latent_cov = latent_cov + jnp.eye(X_inducing.shape[0]) * jnp.jitter
         latent_log_scale = jnp.linalg.cholesky(latent_cov) @ latent_log_scale
-        return jnp.exp(scale_gp.predict(scale_gp_params, X_inducing, latent_log_scale, x, return_cov=False)).squeeze()
+        return jnp.exp(
+            self.scale_gp.predict(scale_gp_params, X_inducing, latent_log_scale, x, return_cov=False)
+        ).squeeze()
 
     def predict_scale(self, params, x):
         if self.X_inducing is not None:
@@ -101,7 +129,7 @@ class GibbsKernel(Kernel):
             keys = jax.random.split(key, X_inducing.shape[1])
 
             def initialize_per_dim(key, x_inducing):
-                params = ExactGP().initialise_params(key, x_inducing.reshape(-1, 1))
+                params = self.scale_gp.initialise_params(key, x_inducing.reshape(-1, 1))
                 return params
 
             params["scale_gp"] = jax.vmap(initialize_per_dim, in_axes=(0, 1))(keys, X_inducing)
@@ -113,7 +141,7 @@ class GibbsKernel(Kernel):
                 X_inducing = self.X_inducing
                 params["X_inducing"] = X_inducing
             key = jax.random.split(key, 1)[0]
-            params["variance_gp"] = ExactGP().initialise_params(key, X_inducing)
+            params["variance_gp"] = self.variance_gp.initialise_params(key, X_inducing)
             params["latent_log_variance"] = jnp.zeros(X_inducing.shape[0])
         else:
             params["variance"] = jnp.array(1.0)
@@ -124,15 +152,33 @@ class GibbsKernel(Kernel):
         if self.flex_scale:
             if self.X_inducing is not None:
                 bijectors["X_inducing"] = Identity()
-            bijectors["scale_gp"] = ExactGP().get_bijectors()
+            bijectors["scale_gp"] = self.scale_gp.get_bijectors()
             bijectors["latent_log_scale"] = Identity()
         else:
             bijectors["lengthscale"] = Exp()
         if self.flex_variance:
             if self.X_inducing is not None:
                 bijectors["X_inducing"] = Identity()
-            bijectors["variance_gp"] = ExactGP().get_bijectors()
+            bijectors["variance_gp"] = self.variance_gp.get_bijectors()
             bijectors["latent_log_variance"] = Identity()
         else:
             bijectors["variance"] = Exp()
         return bijectors
+
+    def __get_priors__(self):
+        priors = {}
+        if self.flex_scale:
+            if self.X_inducing is not None:
+                priors["X_inducing"] = Zero()
+            priors["scale_gp"] = self.scale_gp.get_priors()
+            priors["latent_log_scale"] = Zero()
+        else:
+            priors["lengthscale"] = Zero()
+        if self.flex_variance:
+            if self.X_inducing is not None:
+                priors["X_inducing"] = Zero()
+            priors["variance_gp"] = self.variance_gp.get_priors()
+            priors["latent_log_variance"] = Zero()
+        else:
+            priors["variance"] = Zero()
+        return priors

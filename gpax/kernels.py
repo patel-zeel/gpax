@@ -7,7 +7,8 @@ from gpax.bijectors import Identity, Exp
 from typing import List, Union
 from jaxtyping import Array
 from gpax.base import Base
-from gpax.utils import squared_distance, distance
+from gpax.utils import squared_distance, distance, get_raw_log_prior
+from gpax.distributions import Zero
 
 
 class Kernel(Base):
@@ -60,6 +61,9 @@ class Kernel(Base):
     def get_bijectors(self):
         return {"kernel": self.__get_bijectors__()}
 
+    def get_priors(self):
+        return {"kernel": self.__get_priors__()}
+
     def __add__(self, other):
         return SumKernel(k1=self, k2=other)
 
@@ -68,14 +72,23 @@ class Kernel(Base):
 
 
 class SmoothKernel(Kernel):
-    def __init__(self, active_dims=None, ARD=True, lengthscale=1.0, variance=1.0):
+    def __init__(
+        self, active_dims=None, ARD=True, lengthscale=1.0, variance=1.0, lengthscale_prior=Zero(), variance_prior=Zero()
+    ):
         super().__init__(active_dims, ARD)
         self.lengthscale = lengthscale
         self.variance = variance
+        self.lengthscale_prior = lengthscale_prior
+        self.variance_prior = variance_prior
 
     def call(self, params):
         params = params["kernel"]
         return self.get_kernel_fn(params)
+
+    def log_prior(self, params, bijectors):
+        params = params["kernel"]
+        bijectors = bijectors["kernel"]
+        return {"kernel": get_raw_log_prior(params, bijectors, self.prior)}
 
     def __initialise_params__(self, key, X):
         params = {}
@@ -111,6 +124,9 @@ class SmoothKernel(Kernel):
 
     def __get_bijectors__(self):
         return {"lengthscale": Exp(), "variance": Exp()}
+
+    def __get_priors__(self):
+        return {"lengthscale": self.lengthscale_prior, "variance": self.variance_prior}
 
 
 class RBFKernel(SmoothKernel):
@@ -176,8 +192,6 @@ class Matern52Kernel(SmoothKernel):
 
 
 class PolynomialKernel(SmoothKernel):
-    order: float = 1.0
-
     def __init__(self, active_dims=None, ARD=True, lengthscale=1.0, variance=1.0, order=1.0):
         super().__init__(active_dims, ARD, lengthscale, variance)
         self.order = order
@@ -241,6 +255,9 @@ class MathOperationKernel(Kernel):
 
     def __get_bijectors__(self):
         return {"k1": self.k1.get_bijectors(), "k2": self.k2.get_bijectors()}
+
+    def __get_priors__(self):
+        return {"k1": self.k1.get_priors(), "k2": self.k2.get_priors()}
 
     def __repr__(self) -> str:
         return f"({self.k1} {self.operation} {self.k2})"

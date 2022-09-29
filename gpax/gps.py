@@ -3,6 +3,7 @@ from abc import abstractmethod
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
+from jax.flatten_util import ravel_pytree
 import jax.tree_util as tree_util
 
 from gpax.kernels import Kernel, RBFKernel
@@ -14,11 +15,14 @@ from typing import Literal, Union
 
 from jaxtyping import Array
 
+from gpax.utils import get_raw_log_prior
+
 
 class AbstractGP:
-    kernel: Kernel = RBFKernel()
-    noise: Noise = HomoscedasticNoise()
-    mean: Mean = ConstantMean()
+    def __init__(self, kernel=RBFKernel(), noise=HomoscedasticNoise(), mean=ConstantMean()):
+        self.kernel = kernel
+        self.noise = noise
+        self.mean = mean
 
     @abstractmethod
     def log_probability(self, params, X, y):
@@ -29,19 +33,19 @@ class AbstractGP:
         return NotImplementedError("This method must be implemented by a subclass.")
 
     def initialise_params(self, key, X, X_inducing=None):
-        keys = jax.random.split(key, 4)
         if self.kernel.__class__.__name__ == "GibbsKernel":
-            kernels_params = self.kernel.initialise_params(keys[0], X_inducing=X_inducing)
+            kernels_params = self.kernel.initialise_params(key, X_inducing=X_inducing)
         elif self.kernel.__class__.__name__ in ["SumKernel", "ProductKernel"]:
-            kernels_params = self.kernel.initialise_params(keys[0], X=X, X_inducing=X_inducing)
+            kernels_params = self.kernel.initialise_params(key, X=X, X_inducing=X_inducing)
         else:
-            kernels_params = self.kernel.initialise_params(keys[0], X=X)
+            kernels_params = self.kernel.initialise_params(key, X=X)
+        key, subkey = jax.random.split(key)
         params = {
-            **self.mean.initialise_params(keys[0]),
+            **self.mean.initialise_params(key),
             **kernels_params,
-            **self.noise.initialise_params(keys[2], X_inducing=X_inducing),
+            **self.noise.initialise_params(subkey, X_inducing=X_inducing),
         }
-        key = jax.random.split(keys[3], 1)[0]
+        key = jax.random.split(key, 1)[0]
         return {**params, **self.__initialise_params__(key, X=X, X_inducing=X_inducing)}
 
     def __initialise_params__(self, key, X, X_inducing=None):
@@ -55,6 +59,14 @@ class AbstractGP:
         }
         return {**bijectors, **self.__get_bijectors__()}
 
+    def get_priors(self):
+        priors = {
+            **self.mean.get_priors(),
+            **self.kernel.get_priors(),
+            **self.noise.get_priors(),
+        }
+        return {**priors, **self.__get_priors__()}
+
     def __get_bijectors__(self):
         return NotImplementedError("This method must be implemented by a subclass.")
 
@@ -64,7 +76,7 @@ class ExactGP(AbstractGP):
         rows, columns = jnp.diag_indices_from(K)
         return K.at[rows, columns].set(K[rows, columns] + noise + jnp.jitter)
 
-    def log_probability(self, params, X, y, prior):
+    def log_probability(self, params, X, y):
         noise = self.noise(params, X)
         mean = self.mean(params)
         kernel = self.kernel(params)
@@ -72,15 +84,24 @@ class ExactGP(AbstractGP):
         noisy_covariance = self.add_noise(covariance, noise)
         chol = jnp.linalg.cholesky(noisy_covariance)
         y_bar = y - mean
-        k_inv_y = jsp.linalg.solve_triangular(chol, y_bar, lower=True)
+        k_inv_y = jsp.linalg.cho_solve((chol, True), y_bar)
         log_likelihood = (
             -0.5 * (y_bar.ravel() * k_inv_y.ravel()).sum()  # This will break for multi-dimensional y
             - jnp.log(chol.diagonal()).sum()
             - 0.5 * y.shape[0] * jnp.log(2 * jnp.pi)
         )
-        log_prior = tree_util.tree_map(lambda _prior, param: _prior.log_prob(param).sum(), prior, params)
+        # print(
+        #     -(y_bar.ravel() * k_inv_y.ravel()).sum(),
+        #     -2 * jnp.log(chol.diagonal()).sum(),
+        #     -y.shape[0] * jnp.log(2 * jnp.pi),
+        # )
+        return log_likelihood
 
-        return log_likelihood + log_prior
+    def log_prior(self, params):
+        prior = self.get_priors()
+        bijectors = self.get_bijectors()
+        log_prior = get_raw_log_prior(prior, params, bijectors)
+        return ravel_pytree(log_prior)[0].sum()
 
     def predict(self, params, X, y, X_test, return_cov=True, include_noise=True):
         mean = self.mean(params)
@@ -106,6 +127,9 @@ class ExactGP(AbstractGP):
 
     def __get_bijectors__(self):
         return {}  # No additional bijectors to return.
+
+    def __get_priors__(self):
+        return {}  # No additional priors to return.
 
 
 class SparseGP(AbstractGP):

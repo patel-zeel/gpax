@@ -28,7 +28,7 @@ class TransformedDistribution(Distribution):
 
 class Zero(Distribution):
     def sample(self, seed, sample_shape=()):
-        NotImplementedError("Zero distribution cannot be sampled.")
+        return jax.random.normal(seed, sample_shape)
 
     def log_prob(self, value):
         return jnp.zeros_like(value)
@@ -56,3 +56,15 @@ class Beta(Distribution):
 
     def log_prob(self, value):
         return jsp.stats.beta.logpdf(value, a=self.concentration1, b=self.concentration0)
+
+
+class Gamma(Distribution):
+    def __init__(self, concentration, rate):
+        self.concentration = concentration
+        self.rate = rate
+
+    def sample(self, seed, sample_shape=()):
+        return jax.random.gamma(seed, shape=sample_shape, a=self.concentration) / self.rate
+
+    def log_prob(self, value):
+        return jsp.stats.gamma.logpdf(value, a=self.concentration, scale=1 / self.rate)

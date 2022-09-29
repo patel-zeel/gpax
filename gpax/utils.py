@@ -14,10 +14,25 @@ def distance(X1, X2):
     return jnp.sqrt(squared_distance(X1, X2))
 
 
-def randomize(params, key):
-    values, unravel_fn = ravel_pytree(params)
-    values = jax.random.normal(key, values.shape)
-    return unravel_fn(values)
+def randomize(params, priors, bijectors, key):
+    seeds = seeds_like(params, key)
+
+    def _randomize(param, prior, bijector, seed):
+        sample = prior.sample(seed=seed, sample_shape=param.shape)
+        if prior.__class__.__name__ == "Zero":
+            return bijector(sample)
+        else:
+            return sample
+
+    return tree_util.tree_map(
+        lambda param, prior, bijector, seed: _randomize(param, prior, bijector, seed), params, priors, bijectors, seeds
+    )
+
+
+def seeds_like(params, key):
+    values, treedef = tree_util.tree_flatten(params)
+    keys = [key for key in jax.random.split(key, len(values))]
+    return tree_util.tree_unflatten(treedef, keys)
 
 
 def constrain(params, bijectors):
@@ -28,8 +43,13 @@ def unconstrain(params, bijectors):
     return tree_util.tree_map(lambda param, bijector: bijector.inverse(param), params, bijectors)
 
 
-def initialize_zero_prior(params):
-    tree_util.tree_map(lambda param: Zero(), params)
+def get_raw_log_prior(prior, params, bijectors):
+    return tree_util.tree_map(
+        lambda _prior, param, bijector: _prior.log_prob(param) - bijector.inverse_log_jacobian(param),
+        prior,
+        params,
+        bijectors,
+    )
 
 
 def train_fn(loss_fn, init_raw_params, optimizer, num_epochs=1):
