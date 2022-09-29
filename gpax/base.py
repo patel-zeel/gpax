@@ -1,8 +1,8 @@
-from chex import dataclass
-
-
-@dataclass
 class Base:
+    """
+    This class provides a skeleton for all GPAX classes.
+    """
+
     def __call__(self, params):
         return self.call(params)
 

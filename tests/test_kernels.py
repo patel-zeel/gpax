@@ -1,17 +1,18 @@
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
 import jax
 import jax.numpy as jnp
 
 import pytest
 from gpax import RBFKernel, Matern12Kernel, Matern32Kernel, Matern52Kernel, PolynomialKernel, GibbsKernel
 from gpax.utils import constrain
+from gpax.bijectors import Identity, Exp
 from tests.utils import assert_same_pytree
 
 from stheno import EQ, Matern12, Matern32, Matern52, Linear
 import lab.jax as B
 
-import tensorflow_probability.substrates.jax as tfp
-
-tfb = tfp.bijectors
 
 
 @pytest.mark.parametrize("kernel_fn", [RBFKernel, Matern12Kernel, Matern32Kernel, Matern52Kernel, PolynomialKernel])
@@ -31,7 +32,7 @@ def test_initialize(kernel_fn, kernel_params):
     assert_same_pytree(params, params_expected)
 
     bijectors = kernel.get_bijectors()
-    assert_same_pytree(bijectors, {"kernel": {"lengthscale": tfb.Exp(), "variance": tfb.Exp()}})
+    assert_same_pytree(bijectors, {"kernel": {"lengthscale": Exp(), "variance": Exp()}})
 
 
 def test_combinations():

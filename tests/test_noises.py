@@ -1,3 +1,7 @@
+import os
+
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
 import jax
 import jax.numpy as jnp
 

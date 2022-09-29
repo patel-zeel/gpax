@@ -3,6 +3,7 @@ import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
 import jax.tree_util as tree_util
 import optax
+from gpax.distributions import Zero
 
 
 def squared_distance(X1, X2):
@@ -25,6 +26,10 @@ def constrain(params, bijectors):
 
 def unconstrain(params, bijectors):
     return tree_util.tree_map(lambda param, bijector: bijector.inverse(param), params, bijectors)
+
+
+def initialize_zero_prior(params):
+    tree_util.tree_map(lambda param: Zero(), params)
 
 
 def train_fn(loss_fn, init_raw_params, optimizer, num_epochs=1):

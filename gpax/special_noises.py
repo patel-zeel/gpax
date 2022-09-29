@@ -1,24 +1,18 @@
 import jax
 import jax.numpy as jnp
 
-import tensorflow_probability.substrates.jax as tfp
-
-tfb = tfp.bijectors
-
 from jaxtyping import Array
 
-from chex import dataclass
 from gpax.noises import Noise
 from gpax import ExactGP
+from gpax.bijectors import Identity, Exp
 
 
-@dataclass
 class HeteroscedasticNoise(Noise):
-    latent_log_noise: Array = None
-    X_inducing: Array = None
-    use_kernel_inducing: bool = True
-
-    def __post_init__(self):
+    def __init__(self, X_inducing=None, use_kernel_inducing=True, latent_log_noise=None):
+        self.X_inducing = X_inducing
+        self.use_kernel_inducing = use_kernel_inducing
+        self.latent_log_noise = latent_log_noise
         self.noise_gp = ExactGP()
 
     def __call__(self, params, X):
@@ -55,7 +49,7 @@ class HeteroscedasticNoise(Noise):
         return params
 
     def __get_bijectors__(self):
-        bijectors = {"noise_gp": self.noise_gp.get_bijectors(), "latent_log_noise": tfb.Identity()}
+        bijectors = {"noise_gp": self.noise_gp.get_bijectors(), "latent_log_noise": Identity()}
         if self.X_inducing is not None:
-            bijectors["X_inducing"] = tfb.Identity()
+            bijectors["X_inducing"] = Identity()
         return bijectors

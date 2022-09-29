@@ -1,15 +1,10 @@
 import jax.numpy as jnp
 import jax.tree_util as tree_util
 
-import tensorflow_probability.substrates.jax as tfp
-
-tfb = tfp.bijectors
-
-from chex import dataclass
 from gpax.base import Base
+from gpax.bijectors import Identity
 
 
-@dataclass
 class Mean(Base):
     def initialise_params(self, key):
         params = {"mean": self.__initialise_params__(key)}
@@ -19,9 +14,9 @@ class Mean(Base):
         return {"mean": self.__get_bijectors__()}
 
 
-@dataclass
 class ConstantMean(Mean):
-    value: float = 0.0
+    def __init__(self, value=0.0):
+        self.value = value
 
     def call(self, params):
         params = params["mean"]
@@ -34,4 +29,4 @@ class ConstantMean(Mean):
             return {"value": jnp.array(0.0)}
 
     def __get_bijectors__(self):
-        return {"value": tfb.Identity()}
+        return {"value": Identity()}

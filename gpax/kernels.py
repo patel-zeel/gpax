@@ -2,21 +2,18 @@ import jax
 import jax.numpy as jnp
 import jax.tree_util as tree_util
 
-import tensorflow_probability.substrates.jax as tfp
-
-tfb = tfp.bijectors
+from gpax.bijectors import Identity, Exp
 
 from typing import List, Union
 from jaxtyping import Array
-from chex import dataclass
 from gpax.base import Base
 from gpax.utils import squared_distance, distance
 
 
-@dataclass
 class Kernel(Base):
-    active_dims: List[int] = None
-    ARD: bool = True
+    def __init__(self, active_dims=None, ARD=True):
+        self.active_dims = active_dims
+        self.ARD = ARD
 
     def __call__(self, params):
         if self.active_dims is None:
@@ -70,10 +67,11 @@ class Kernel(Base):
         return ProductKernel(k1=self, k2=other)
 
 
-@dataclass
 class SmoothKernel(Kernel):
-    lengthscale: Union[float, List[float], Array] = 1.0
-    variance: Union[float, Array] = 1.0
+    def __init__(self, active_dims=None, ARD=True, lengthscale=1.0, variance=1.0):
+        super().__init__(active_dims, ARD)
+        self.lengthscale = lengthscale
+        self.variance = variance
 
     def call(self, params):
         params = params["kernel"]
@@ -112,10 +110,9 @@ class SmoothKernel(Kernel):
         return params
 
     def __get_bijectors__(self):
-        return {"lengthscale": tfb.Exp(), "variance": tfb.Exp()}
+        return {"lengthscale": Exp(), "variance": Exp()}
 
 
-@dataclass
 class RBFKernel(SmoothKernel):
     def get_kernel_fn(self, params):
         def _kernel_fn(X1, X2):
@@ -134,7 +131,6 @@ ExpSquaredKernel = RBFKernel
 SquaredExpKernel = RBFKernel
 
 
-@dataclass
 class Matern12Kernel(SmoothKernel):
     def get_kernel_fn(self, params):
         def _kernel_fn(X1, X2):
@@ -149,7 +145,6 @@ class Matern12Kernel(SmoothKernel):
         return "Matern12"
 
 
-@dataclass
 class Matern32Kernel(SmoothKernel):
     def get_kernel_fn(self, params):
         def _kernel_fn(X1, X2):
@@ -165,7 +160,6 @@ class Matern32Kernel(SmoothKernel):
         return "Matern32"
 
 
-@dataclass
 class Matern52Kernel(SmoothKernel):
     def get_kernel_fn(self, params):
         def _kernel_fn(X1, X2):
@@ -181,9 +175,12 @@ class Matern52Kernel(SmoothKernel):
         return "Matern52"
 
 
-@dataclass
 class PolynomialKernel(SmoothKernel):
     order: float = 1.0
+
+    def __init__(self, active_dims=None, ARD=True, lengthscale=1.0, variance=1.0, order=1.0):
+        super().__init__(active_dims, ARD, lengthscale, variance)
+        self.order = order
 
     def get_kernel_fn(self, params):
         def _kernel_fn(X1, X2):
@@ -197,14 +194,11 @@ class PolynomialKernel(SmoothKernel):
         return "Polynomial"
 
 
-@dataclass
 class MathOperationKernel(Kernel):
-    k1: Kernel = None
-    k2: Kernel = None
-
-    def __post_init__(self):
-        assert self.k1 is not None, "k1 must be specified"
-        assert self.k2 is not None, "k2 must be specified"
+    def __init__(self, k1, k2, active_dims=None, ARD=True):
+        super().__init__(active_dims, ARD)
+        self.k1 = k1
+        self.k2 = k2
 
     def call(self, params):
         params = params["kernel"]
@@ -252,15 +246,15 @@ class MathOperationKernel(Kernel):
         return f"({self.k1} {self.operation} {self.k2})"
 
 
-@dataclass(repr=False)
 class ProductKernel(MathOperationKernel):
-    def __post_init__(self):
+    def __init__(self, k1, k2, active_dims=None, ARD=True):
+        super().__init__(k1, k2, active_dims, ARD)
         self.function = lambda k1, k2: k1 * k2
         self.operation = "x"
 
 
-@dataclass(repr=False)
 class SumKernel(MathOperationKernel):
-    def __post_init__(self):
+    def __init__(self, k1, k2, active_dims=None, ARD=True):
+        super().__init__(k1, k2, active_dims, ARD)
         self.function = lambda k1, k2: k1 + k2
         self.operation = "+"

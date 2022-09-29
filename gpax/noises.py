@@ -1,16 +1,10 @@
-from statistics import variance
 import jax.numpy as jnp
 import jax.tree_util as tree_util
 
-import tensorflow_probability.substrates.jax as tfp
-
-tfb = tfp.bijectors
-
-from chex import dataclass
 from gpax.base import Base
+from gpax.bijectors import Exp
 
 
-@dataclass
 class Noise(Base):
     def __call__(self, params, X):
         return self.call(params, X)
@@ -29,18 +23,15 @@ class Noise(Base):
         return {"noise": self.__get_bijectors__()}
 
 
-@dataclass
 class HomoscedasticNoise(Noise):
-    variance: float = 1.0
+    def __init__(self, variance=1.0):
+        self.variance = variance
 
     def call(self, params, X):
         return params["noise"]["variance"]
 
     def __initialise_params__(self, key):
-        if self.variance is not None:
-            return {"variance": self.variance}
-        else:
-            return {"variance": jnp.array(1.0)}
+        return {"variance": self.variance}
 
     def __get_bijectors__(self):
-        return {"variance": tfb.Exp()}
+        return {"variance": Exp()}

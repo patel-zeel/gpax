@@ -1,24 +1,32 @@
+from abc import abstractmethod
+
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
+import jax.tree_util as tree_util
+
 from gpax.kernels import Kernel, RBFKernel
-from gpax.noises import Noise, HomoscedasticNoise
-from gpax.means import Mean, ConstantMean
+from gpax.means import ConstantMean, Mean
+from gpax.noises import HomoscedasticNoise, Noise
+from gpax.bijectors import Identity
 
-import tensorflow_probability.substrates.jax as tfp
-
-tfd = tfp.distributions
-tfb = tfp.bijectors
+from typing import Literal, Union
 
 from jaxtyping import Array
-from chex import dataclass
 
 
-@dataclass
 class AbstractGP:
     kernel: Kernel = RBFKernel()
     noise: Noise = HomoscedasticNoise()
     mean: Mean = ConstantMean()
+
+    @abstractmethod
+    def log_probability(self, params, X, y):
+        return NotImplementedError("This method must be implemented by a subclass.")
+
+    @abstractmethod
+    def predict(self, params, X, X_new, return_cov=True, include_noise=True):
+        return NotImplementedError("This method must be implemented by a subclass.")
 
     def initialise_params(self, key, X, X_inducing=None):
         keys = jax.random.split(key, 4)
@@ -51,21 +59,28 @@ class AbstractGP:
         return NotImplementedError("This method must be implemented by a subclass.")
 
 
-@dataclass
 class ExactGP(AbstractGP):
     def add_noise(self, K, noise):
         rows, columns = jnp.diag_indices_from(K)
         return K.at[rows, columns].set(K[rows, columns] + noise + jnp.jitter)
 
-    def log_probability(self, params, X, y):
+    def log_probability(self, params, X, y, prior):
         noise = self.noise(params, X)
         mean = self.mean(params)
         kernel = self.kernel(params)
         covariance = kernel(X, X)
         noisy_covariance = self.add_noise(covariance, noise)
-        # marginal = tfd.MultivariateNormalTriL(loc=mean, scale_tril=jnp.linalg.cholesky(noisy_covariance))
-        marginal = tfd.MultivariateNormalFullCovariance(loc=mean, covariance_matrix=noisy_covariance)
-        return marginal.log_prob(y)
+        chol = jnp.linalg.cholesky(noisy_covariance)
+        y_bar = y - mean
+        k_inv_y = jsp.linalg.solve_triangular(chol, y_bar, lower=True)
+        log_likelihood = (
+            -0.5 * (y_bar.ravel() * k_inv_y.ravel()).sum()  # This will break for multi-dimensional y
+            - jnp.log(chol.diagonal()).sum()
+            - 0.5 * y.shape[0] * jnp.log(2 * jnp.pi)
+        )
+        log_prior = tree_util.tree_map(lambda _prior, param: _prior.log_prob(param).sum(), prior, params)
+
+        return log_likelihood + log_prior
 
     def predict(self, params, X, y, X_test, return_cov=True, include_noise=True):
         mean = self.mean(params)
@@ -93,37 +108,22 @@ class ExactGP(AbstractGP):
         return {}  # No additional bijectors to return.
 
 
-@dataclass
 class SparseGP(AbstractGP):
-    method: str = "vfe"
+    method: Literal["vfe", "fitc", "dtc"] = "vfe"
+    X_inducing: Array = None
 
-    def __post_init__(self):
-        assert self.method in [
-            "vfe",
-            "fitc",
-            "dtc",
-        ], "method must be one of vfe, fitc, dtc"
+    def log_probability(self, params, X, y):
+        X_inducing = params["X_inducing"]
+        k_mm = self.kernel(params, X_inducing, X_inducing)
 
-        self.pseudo_obs = {"vfe": PseudoObs, "fitc": PseudoObsFITC, "dtc": PseudoObsDTC}
-
-    def get_pseudo_obs(self, params, f, X, y):
-        train_noise = self.noise(params, X)
-        return self.pseudo_obs[self.method](f(params["X_inducing"]), f(X, train_noise), y)
-
-    def elbo(self, params, X, y):
-        f = self.get_gp(params)
-        pseudo_obs = self.get_pseudo_obs(params, f, X, y)
-        elbo = pseudo_obs.elbo(f.measure)
-        return elbo
-
-    def predict(self, params, X, y, X_test, return_cov=True, include_noise=True):
-        f = self.get_gp(params)
-        pseudo_obs = self.get_pseudo_obs(params, f, X, y)
-        return self.return_posterior(params, f, pseudo_obs, X_test, return_cov, include_noise)
+    def predict(self, params, X, y, X_test):
+        pass
 
     def __initialise_params__(self, key, X, X_inducing):
-        assert X_inducing is not None, "X_inducing must be provided for sparse GPs."
+        if X_inducing is None:
+            assert self.X_inducing is not None, "X_inducing must be specified."
+            X_inducing = self.X_inducing
         return {"X_inducing": X_inducing}
 
     def __get_bijectors__(self):
-        return {"X_inducing": tfb.Identity()}
+        return {"X_inducing": Identity()}

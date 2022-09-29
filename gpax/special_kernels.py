@@ -2,21 +2,18 @@ import jax
 import jax.numpy as jnp
 import jax.tree_util as tree_util
 
-import tensorflow_probability.substrates.jax as tfp
-
-tfb = tfp.bijectors
-
 from jaxtyping import Array
-from chex import dataclass
 from gpax.gps import ExactGP
 from gpax.kernels import Kernel, RBFKernel
+from gpax.bijectors import Identity, Exp
 
 
-@dataclass
 class GibbsKernel(Kernel):
-    X_inducing: Array = None
-    flex_scale: bool = True
-    flex_variance: bool = True
+    def __init__(self, X_inducing=None, flex_scale=True, flex_variance=True, active_dims=None, ARD=True):
+        super().__init__(active_dims=active_dims, ARD=ARD)
+        self.X_inducing = X_inducing
+        self.flex_scale = flex_scale
+        self.flex_variance = flex_variance
 
     def call(self, params):
         def kernel_fn(x1, x2):
@@ -126,16 +123,16 @@ class GibbsKernel(Kernel):
         bijectors = {}
         if self.flex_scale:
             if self.X_inducing is not None:
-                bijectors["X_inducing"] = tfb.Identity()
+                bijectors["X_inducing"] = Identity()
             bijectors["scale_gp"] = ExactGP().get_bijectors()
-            bijectors["latent_log_scale"] = tfb.Identity()
+            bijectors["latent_log_scale"] = Identity()
         else:
-            bijectors["lengthscale"] = tfb.Exp()
+            bijectors["lengthscale"] = Exp()
         if self.flex_variance:
             if self.X_inducing is not None:
-                bijectors["X_inducing"] = tfb.Identity()
+                bijectors["X_inducing"] = Identity()
             bijectors["variance_gp"] = ExactGP().get_bijectors()
-            bijectors["latent_log_variance"] = tfb.Identity()
+            bijectors["latent_log_variance"] = Identity()
         else:
-            bijectors["variance"] = tfb.Exp()
+            bijectors["variance"] = Exp()
         return bijectors
