@@ -35,12 +35,7 @@ class AbstractGP:
 
     def initialise_params(self, key, X, X_inducing=None):
         keys = jax.random.split(key, 4)
-        if self.kernel.__class__.__name__ == "GibbsKernel":
-            kernels_params = self.kernel.initialise_params(keys[0], X_inducing=X_inducing)
-        elif self.kernel.__class__.__name__ in ["SumKernel", "ProductKernel"]:
-            kernels_params = self.kernel.initialise_params(keys[0], X=X, X_inducing=X_inducing)
-        else:
-            kernels_params = self.kernel.initialise_params(keys[0], X=X)
+        kernels_params = self.kernel.initialise_params(keys[0], X=X, X_inducing=X_inducing)
 
         params = {
             **self.mean.initialise_params(keys[1]),
