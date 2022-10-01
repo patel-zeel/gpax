@@ -7,7 +7,7 @@ from jax.flatten_util import ravel_pytree
 import jax.tree_util as tree_util
 
 from gpax.kernels import Kernel, RBFKernel
-from gpax.means import ConstantMean, Mean
+from gpax.means import ScalarMean, Mean
 from gpax.noises import HomoscedasticNoise, Noise
 from gpax.bijectors import Identity
 from gpax.utils import constrain, unconstrain
@@ -20,7 +20,7 @@ from gpax.utils import get_raw_log_prior
 
 
 class AbstractGP:
-    def __init__(self, kernel=RBFKernel(), noise=HomoscedasticNoise(), mean=ConstantMean()):
+    def __init__(self, kernel=RBFKernel(), noise=HomoscedasticNoise(), mean=ScalarMean()):
         self.kernel = kernel
         self.noise = noise
         self.mean = mean

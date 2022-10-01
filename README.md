@@ -9,7 +9,7 @@ Define `jnp.jitter=<reasonable value>` in the beginning of your code, it is used
 1. It is the vanilla GP regression class. It takes the following arguments:
 - `kernel`: the kernel to use (default: `RBFKernel`)
 - `noise`: the noise to use (default: `HomoskedasticNoise`)
-- `mean`: the mean to use (default: `ConstantMean`)
+- `mean`: the mean to use (default: `ScalarMean`)
 
 2. `initialise_params(key, X, X_inducing)` method initialises the parameters of the model. `X` is passed to infer the dimensionality of X for kernel e.g. if `X` is (5, 3) and ARD is true, kernel lengthscale will be initialized of shape (3,). `X_inducing` is optional argument and it is only used when using `GibbsKernel` and/or `HeteroScedasticNoise`.
 

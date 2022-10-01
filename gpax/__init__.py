@@ -9,7 +9,7 @@ from gpax.kernels import (
 )
 from gpax.gps import ExactGP, SparseGP
 from gpax.noises import HomoscedasticNoise
-from gpax.means import ConstantMean
+from gpax.means import ScalarMean
 from gpax.special_kernels import GibbsKernel
 from gpax.special_noises import HeteroscedasticNoise
 

@@ -24,7 +24,7 @@ class Mean(Base):
         return {"mean": self.__get_priors__()}
 
 
-class ConstantMean(Mean):
+class ScalarMean(Mean):
     def __init__(self, value=None, value_prior=Zero()):
         self.value = value
         self.value_prior = value_prior
