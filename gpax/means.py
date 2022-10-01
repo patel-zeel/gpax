@@ -1,11 +1,9 @@
 import jax.numpy as jnp
 import jax.tree_util as tree_util
-from regex import D
 
 from gpax.base import Base
 from gpax.bijectors import Identity
 from gpax.distributions import Zero
-from gpax.utils import get_raw_log_prior
 
 
 class Mean(Base):
@@ -27,7 +25,7 @@ class Mean(Base):
 
 
 class ConstantMean(Mean):
-    def __init__(self, value=0.0, value_prior=Zero()):
+    def __init__(self, value=None, value_prior=Zero()):
         self.value = value
         self.value_prior = value_prior
 
@@ -38,10 +36,11 @@ class ConstantMean(Mean):
         params = params["mean"]
 
     def __initialise_params__(self, key):
+        priors = self.__get_priors__()
         if self.value is not None:
             return {"value": self.value}
         else:
-            return {"value": jnp.array(0.0)}
+            return {"value": priors["value"].sample(key)}
 
     def __get_bijectors__(self):
         return {"value": Identity()}

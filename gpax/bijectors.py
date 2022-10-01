@@ -23,7 +23,12 @@ class Bijector:
             return self.inverse_fn(ele)
 
     def log_jacobian(self, value):
-        return jnp.log(jax.jacobian(self.forward)(value))
+        def _log_jacobian(value):
+            return jnp.log(jax.jacobian(self.forward)(value))
+
+        for _ in value.shape:
+            _log_jacobian = jax.vmap(_log_jacobian)
+        return _log_jacobian(value)
 
     def inverse_log_jacobian(self, array):
         def _inverse_log_jacobian(value):

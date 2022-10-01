@@ -33,20 +33,20 @@ class AbstractGP:
         return NotImplementedError("This method must be implemented by a subclass.")
 
     def initialise_params(self, key, X, X_inducing=None):
+        keys = jax.random.split(key, 4)
         if self.kernel.__class__.__name__ == "GibbsKernel":
-            kernels_params = self.kernel.initialise_params(key, X_inducing=X_inducing)
+            kernels_params = self.kernel.initialise_params(keys[0], X_inducing=X_inducing)
         elif self.kernel.__class__.__name__ in ["SumKernel", "ProductKernel"]:
-            kernels_params = self.kernel.initialise_params(key, X=X, X_inducing=X_inducing)
+            kernels_params = self.kernel.initialise_params(keys[0], X=X, X_inducing=X_inducing)
         else:
-            kernels_params = self.kernel.initialise_params(key, X=X)
-        key, subkey = jax.random.split(key)
+            kernels_params = self.kernel.initialise_params(keys[0], X=X)
+
         params = {
-            **self.mean.initialise_params(key),
+            **self.mean.initialise_params(keys[1]),
             **kernels_params,
-            **self.noise.initialise_params(subkey, X_inducing=X_inducing),
+            **self.noise.initialise_params(keys[2], X_inducing=X_inducing),
         }
-        key = jax.random.split(key, 1)[0]
-        return {**params, **self.__initialise_params__(key, X=X, X_inducing=X_inducing)}
+        return {**params, **self.__initialise_params__(keys[3], X=X, X_inducing=X_inducing)}
 
     def __initialise_params__(self, key, X, X_inducing=None):
         return NotImplementedError("This method must be implemented by a subclass.")
@@ -103,24 +103,32 @@ class ExactGP(AbstractGP):
         log_prior = get_raw_log_prior(prior, params, bijectors)
         return ravel_pytree(log_prior)[0].sum()
 
-    def predict(self, params, X, y, X_test, return_cov=True, include_noise=True):
+    def condition(self, params, X, y):
         mean = self.mean(params)
         kernel = self.kernel(params)
         y_bar = y - mean
         noisy_covariance = self.add_noise(kernel(X, X), self.noise(params, X) + jnp.jitter)
         L = jnp.linalg.cholesky(noisy_covariance)
         alpha = jsp.linalg.cho_solve((L, True), y_bar)
-        K_star = kernel(X_test, X)
-        pred_mean = K_star @ alpha + mean
 
-        if return_cov:
-            v = jsp.linalg.cho_solve((L, True), K_star.T)
-            pred_cov = kernel(X_test, X_test) - K_star @ v
-            if include_noise:
-                pred_cov = self.add_noise(pred_cov, self.noise(params, X_test))
-            return pred_mean, pred_cov
-        else:
-            return pred_mean
+        def predict_fn(X_test, return_cov=True, include_noise=True):
+            K_star = kernel(X_test, X)
+            pred_mean = K_star @ alpha + mean
+
+            if return_cov:
+                v = jsp.linalg.cho_solve((L, True), K_star.T)
+                pred_cov = kernel(X_test, X_test) - K_star @ v
+                if include_noise:
+                    pred_cov = self.add_noise(pred_cov, self.noise(params, X_test))
+                return pred_mean, pred_cov
+            else:
+                return pred_mean
+
+        return predict_fn
+
+    def predict(self, params, X, y, X_test, return_cov=True, include_noise=True):
+        predict_fn = self.condition(params, X, y)
+        return predict_fn(X_test, return_cov=return_cov, include_noise=include_noise)
 
     def __initialise_params__(self, key, X, X_inducing):
         return {}  # No additional parameters to initialise.

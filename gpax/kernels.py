@@ -73,7 +73,13 @@ class Kernel(Base):
 
 class SmoothKernel(Kernel):
     def __init__(
-        self, active_dims=None, ARD=True, lengthscale=1.0, variance=1.0, lengthscale_prior=Zero(), variance_prior=Zero()
+        self,
+        active_dims=None,
+        ARD=True,
+        lengthscale=None,
+        variance=None,
+        lengthscale_prior=Exp()(Zero()),
+        variance_prior=Exp()(Zero()),
     ):
         super().__init__(active_dims, ARD)
         self.lengthscale = lengthscale
@@ -92,6 +98,8 @@ class SmoothKernel(Kernel):
 
     def __initialise_params__(self, key, X):
         params = {}
+        priors = self.__get_priors__()
+        keys = jax.random.split(key, 2)
         if self.ARD:
             if self.lengthscale is not None:
                 lengthscale = jnp.asarray(self.lengthscale)
@@ -102,7 +110,9 @@ class SmoothKernel(Kernel):
                 else:
                     raise ValueError("lengthscale must be either a scalar or an array of shape (len(active_dims),).")
             else:
-                params["lengthscale"] = jnp.ones((len(self.active_dims),))
+                params["lengthscale"] = priors["lengthscale"].sample(
+                    seed=keys[0], sample_shape=(len(self.active_dims),)
+                )
         else:
             if self.lengthscale is not None:
                 lengthscale = jnp.asarray(self.lengthscale)
@@ -111,7 +121,7 @@ class SmoothKernel(Kernel):
                 else:
                     raise ValueError("lengthscale must be a scalar when ARD=False.")
             else:
-                params["lengthscale"] = jnp.array(1.0)
+                params["lengthscale"] = priors["lengthscale"].sample(seed=keys[0])
         if self.variance is not None:
             variance = jnp.asarray(self.variance)
             if variance.squeeze().shape == ():
@@ -119,7 +129,7 @@ class SmoothKernel(Kernel):
             else:
                 raise ValueError("variance must be a scalar.")
         else:
-            params["variance"] = jnp.array(1.0)
+            params["variance"] = priors["variance"].sample(seed=keys[1])
         return params
 
     def __get_bijectors__(self):

@@ -23,7 +23,10 @@ class TransformedDistribution(Distribution):
         return self.bijector(self.distribution.sample(seed, sample_shape))
 
     def log_prob(self, value):
-        return self.distribution.log_prob(self.bijector.inverse(value)) + self.bijector.inverse_log_jacobian(value)
+        if self.distribution.__class__.__name__ == "Zero":
+            return jnp.zeros_like(value)
+        else:
+            return self.distribution.log_prob(self.bijector.inverse(value)) + self.bijector.inverse_log_jacobian(value)
 
 
 class Zero(Distribution):
@@ -35,7 +38,7 @@ class Zero(Distribution):
 
 
 class Normal(Distribution):
-    def __init__(self, loc, scale):
+    def __init__(self, loc=0.0, scale=1.0):
         self.loc = loc
         self.scale = scale
 
@@ -44,18 +47,6 @@ class Normal(Distribution):
 
     def log_prob(self, value):
         return jsp.stats.norm.logpdf(value, loc=self.loc, scale=self.scale)
-
-
-class Beta(Distribution):
-    def __init__(self, concentration0, concentration1):
-        self.concentration0 = concentration0
-        self.concentration1 = concentration1
-
-    def sample(self, seed, sample_shape=()):
-        return jax.random.beta(seed, a=self.concentration1, b=self.concentration0, shape=sample_shape)
-
-    def log_prob(self, value):
-        return jsp.stats.beta.logpdf(value, a=self.concentration1, b=self.concentration0)
 
 
 class Gamma(Distribution):
@@ -68,3 +59,15 @@ class Gamma(Distribution):
 
     def log_prob(self, value):
         return jsp.stats.gamma.logpdf(value, a=self.concentration, scale=1 / self.rate)
+
+
+class Beta(Distribution):
+    def __init__(self, concentration0, concentration1):
+        self.concentration0 = concentration0
+        self.concentration1 = concentration1
+
+    def sample(self, seed, sample_shape=()):
+        return jax.random.beta(seed, a=self.concentration1, b=self.concentration0, shape=sample_shape)
+
+    def log_prob(self, value):
+        return jsp.stats.beta.logpdf(value, a=self.concentration1, b=self.concentration0)

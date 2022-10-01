@@ -34,7 +34,7 @@ class Noise(Base):
 
 
 class HomoscedasticNoise(Noise):
-    def __init__(self, variance=1.0, variance_prior=Zero()):
+    def __init__(self, variance=None, variance_prior=Exp()(Zero())):
         self.variance = variance
         self.variance_prior = variance_prior
 
@@ -42,7 +42,11 @@ class HomoscedasticNoise(Noise):
         return params["noise"]["variance"]
 
     def __initialise_params__(self, key):
-        return {"variance": self.variance}
+        priors = self.__get_priors__()
+        if self.variance is not None:
+            return {"variance": self.variance}
+        else:
+            return {"variance": priors["variance"].sample(key)}
 
     def __get_bijectors__(self):
         return {"variance": Exp()}

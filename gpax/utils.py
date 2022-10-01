@@ -43,12 +43,22 @@ def unconstrain(params, bijectors):
     return tree_util.tree_map(lambda param, bijector: bijector.inverse(param), params, bijectors)
 
 
-def get_raw_log_prior(prior, params, bijectors):
+def is_zero_prior(prior):
+    if prior.__class__.__name__ == "TransformedDistribution":
+        return is_zero_prior(prior.distribution)
+    else:
+        return prior.__class__.__name__ == "Zero"
+
+
+def get_raw_log_prior(priors, params, bijectors):
+    def _get_raw_log_prior(prior, param, bijector):
+        if is_zero_prior(prior):
+            return prior.log_prob(param)
+        else:
+            return prior.log_prob(param) - bijector.inverse_log_jacobian(param)
+
     return tree_util.tree_map(
-        lambda _prior, param, bijector: _prior.log_prob(param) - bijector.inverse_log_jacobian(param),
-        prior,
-        params,
-        bijectors,
+        lambda prior, param, bijector: _get_raw_log_prior(prior, param, bijector), priors, params, bijectors
     )
 
 
@@ -56,7 +66,7 @@ def train_fn(loss_fn, init_raw_params, optimizer, num_epochs=1):
     state = optimizer.init(init_raw_params)
 
     # dry run
-    loss_fn(init_raw_params)
+    # loss_fn(init_raw_params)
 
     @jax.jit
     def step(raw_params_and_state, aux):
