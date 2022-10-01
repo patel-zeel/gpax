@@ -13,4 +13,7 @@ from gpax.means import ConstantMean
 from gpax.special_kernels import GibbsKernel
 from gpax.special_noises import HeteroscedasticNoise
 
+import jax.numpy as jnp
+
+jnp.jitter = jnp.array(1e-6)
 print("imported nosthenogpax version")

@@ -10,6 +10,7 @@ from gpax.kernels import Kernel, RBFKernel
 from gpax.means import ConstantMean, Mean
 from gpax.noises import HomoscedasticNoise, Noise
 from gpax.bijectors import Identity
+from gpax.utils import constrain, unconstrain
 
 from typing import Literal, Union
 
@@ -69,6 +70,12 @@ class AbstractGP:
 
     def __get_bijectors__(self):
         return NotImplementedError("This method must be implemented by a subclass.")
+
+    def constrain(self, params):
+        return constrain(params, self.get_bijectors())
+
+    def unconstrain(self, params):
+        return unconstrain(params, self.get_bijectors())
 
 
 class ExactGP(AbstractGP):

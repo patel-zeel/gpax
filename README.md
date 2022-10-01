@@ -1,5 +1,8 @@
 **Disclaimer: Some of the following information also includes future features that are not yet implemented. Some information might also be outdated.**
 
+## Quick notes
+Define `jnp.jitter=<reasonable value>` in the beginning of your code, it is used everywhere in the library. The default value is 1e-6.
+
 ## GP
 
 ### ExactGP
