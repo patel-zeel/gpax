@@ -47,3 +47,20 @@ class ScalarMean(Mean):
 
     def __get_priors__(self):
         return {"value": self.value_prior}
+
+
+class ZeroMean(Mean):
+    def call(self, params):
+        return jnp.array(0.0)
+
+    def log_prior(self, params):
+        params = params["mean"]
+
+    def __initialise_params__(self, key):
+        return {}
+
+    def __get_bijectors__(self):
+        return {}
+
+    def __get_priors__(self):
+        return {}

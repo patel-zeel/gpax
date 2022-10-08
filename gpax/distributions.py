@@ -71,3 +71,34 @@ class Beta(Distribution):
 
     def log_prob(self, value):
         return jsp.stats.beta.logpdf(value, a=self.concentration1, b=self.concentration0)
+
+
+class Exponential(Distribution):
+    def __init__(self, rate):
+        self.rate = rate
+
+    def sample(self, seed, sample_shape=()):
+        return jax.random.exponential(seed, shape=sample_shape) / self.rate
+
+    def log_prob(self, value):
+        return jsp.stats.expon.logpdf(value, scale=1 / self.rate)
+
+
+class Frechet(Distribution):
+    def __init__(self, rate, dim):
+        self.rate = rate
+        self.dim = dim
+
+    def sample(self, seed, sample_shape=()):
+        samples = jax.random.uniform(key=seed, shape=sample_shape)
+        return self.inverse_cdf(samples)
+
+    def inverse_cdf(self, x):
+        return (-jnp.log(x) / self.rate) ** (-2 / self.dim)
+
+    def cdf(self, x):
+        return jnp.exp(-self.rate * x ** (-self.dim / 2))
+
+    def log_prob(self, value):
+        prefix = jnp.log(self.dim / 2 * self.rate * value ** (-self.dim / 2 - 1))
+        return prefix + (-self.rate * value ** (-self.dim / 2))

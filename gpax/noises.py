@@ -19,8 +19,8 @@ class Noise(Base):
     def call(self, params, X):
         raise NotImplementedError("Must be implemented by subclass")
 
-    def initialise_params(self, key, X_inducing=None):
-        if self.__class__.__name__ == "HeteroscedasticNoise":
+    def initialise_params(self, key, X_inducing=None, X=None):
+        if self.__class__.__name__ in ["HeteroscedasticNoise", "HeinonenHeteroscedasticNoise"]:
             params = {"noise": self.__initialise_params__(key, X_inducing=X_inducing)}
         else:
             params = {"noise": self.__initialise_params__(key)}
@@ -38,8 +38,11 @@ class HomoscedasticNoise(Noise):
         self.variance = variance
         self.variance_prior = variance_prior
 
+    def get_posterior_penalty(self, params, X):
+        return jnp.array(0.0)
+
     def call(self, params, X):
-        return params["noise"]["variance"]
+        return (params["noise"]["variance"]).repeat(X.shape[0])
 
     def __initialise_params__(self, key):
         priors = self.__get_priors__()

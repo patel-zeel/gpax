@@ -4,10 +4,11 @@ import jax.numpy as jnp
 from jaxtyping import Array
 from gpax.kernels import RBFKernel
 
-from gpax.noises import Noise
+from gpax.noises import HomoscedasticNoise, Noise
 from gpax import ExactGP
 from gpax.bijectors import Identity, Exp
 from gpax.distributions import Zero, Normal
+from gpax.means import ScalarMean, ZeroMean
 
 
 class HeteroscedasticNoise(Noise):
@@ -16,21 +17,28 @@ class HeteroscedasticNoise(Noise):
         X_inducing=None,
         use_kernel_inducing=True,
         std_latent_noise=None,
-        std_latent_noise_prior=Normal(),
-        latent_gp_lengthscale_prior=Exp()(Zero()),
-        latent_gp_variance_prior=Exp()(Zero()),
+        std_latent_noise_prior=None,
+        latent_gp_lengthscale_prior=None,
+        latent_gp_variance_prior=None,
         train_latent_gp_noise=False,
+        non_centered=True,
     ):
         self.X_inducing = X_inducing
         self.use_kernel_inducing = use_kernel_inducing
         self.std_latent_noise = std_latent_noise
         self.std_latent_noise_prior = std_latent_noise_prior
         self.train_latent_gp_noise = train_latent_gp_noise
+        self.non_centered = non_centered
         self.noise_gp = ExactGP(
             RBFKernel(lengthscale_prior=latent_gp_lengthscale_prior, variance_prior=latent_gp_variance_prior)
         )
 
-    def __call__(self, params, X):
+    def get_posterior_penalty(self, params, X):
+        _, pred_cov = self(params, X, return_cov=True)
+        chol = jnp.linalg.cholesky(pred_cov)
+        return jnp.sum(jnp.log(jnp.diagonal(chol)))
+
+    def __call__(self, params, X, return_cov=False):
         if self.X_inducing is not None:
             X_inducing = params["noise"]["X_inducing"]  # Use X_inducing from noise
         elif self.use_kernel_inducing:
@@ -43,17 +51,28 @@ class HeteroscedasticNoise(Noise):
                 params["noise"]["noise_gp"]["noise"]["variance"]
             )
 
-        latent_cov = self.noise_gp.kernel(params["noise"]["noise_gp"])(X_inducing, X_inducing)
-        latent_cov = latent_cov + jnp.eye(X_inducing.shape[0]) * jnp.jitter
-        # jax.debug.print(
-        #     "latent_cov={latent_cov}, X_inducing={X_inducing}", latent_cov=latent_cov, X_inducing=X_inducing
-        # )
-        latent_log_noise = jnp.linalg.cholesky(latent_cov) @ params["noise"]["std_latent_noise"]
+        if self.non_centered:
+            latent_cov = self.noise_gp.kernel(params["noise"]["noise_gp"])(X_inducing, X_inducing)
+            latent_cov = latent_cov + jnp.eye(X_inducing.shape[0]) * (
+                jnp.jitter + params["noise"]["noise_gp"]["noise"]["variance"]
+            )
+            # jax.debug.print(
+            #     "latent_cov={latent_cov}, X_inducing={X_inducing}", latent_cov=latent_cov, X_inducing=X_inducing
+            # )
+            latent_log_noise = jnp.linalg.cholesky(latent_cov) @ params["noise"]["std_latent_noise"]
+        else:
+            latent_log_noise = params["noise"]["std_latent_noise"]
         params = params["noise"]
 
-        return jnp.exp(
-            self.noise_gp.predict(params["noise_gp"], X_inducing, latent_log_noise, X, return_cov=False)
-        ).squeeze()  # squeeze is needed to make (n, 1) -> (n,)
+        if return_cov:
+            pred_mean, pred_cov = self.noise_gp.predict(
+                params["noise_gp"], X_inducing, latent_log_noise, X, return_cov=return_cov
+            )
+            return jnp.exp(pred_mean).squeeze(), pred_cov
+        else:
+            return jnp.exp(
+                self.noise_gp.predict(params["noise_gp"], X_inducing, latent_log_noise, X, return_cov=return_cov)
+            ).squeeze()  # squeeze is needed to make (n, 1) -> (n,)
 
     def __initialise_params__(self, key, X_inducing):
         priors = self.__get_priors__()
@@ -65,7 +84,7 @@ class HeteroscedasticNoise(Noise):
         key, subkey = jax.random.split(key)
         params["noise_gp"] = self.noise_gp.initialise_params(key, X_inducing)
         if self.train_latent_gp_noise is False:
-            params["noise_gp"]["noise"]["variance"] = jnp.jitter
+            params["noise_gp"]["noise"]["variance"] = jnp.array(0.0)
 
         if self.std_latent_noise is None:
             params["std_latent_noise"] = priors["std_latent_noise"].sample(subkey, (X_inducing.shape[0],))
@@ -83,4 +102,78 @@ class HeteroscedasticNoise(Noise):
         priors = {"noise_gp": self.noise_gp.get_priors(), "std_latent_noise": self.std_latent_noise_prior}
         if self.X_inducing is not None:
             priors["X_inducing"] = Zero()  # Dummy prior, never used for sampling
+        return priors
+
+
+class HeinonenHeteroscedasticNoise(Noise):
+    def __init__(
+        self,
+        X_inducing,
+        std_latent_noise=None,
+        std_latent_noise_prior=None,
+        latent_gp_lengthscale_prior=None,
+        latent_gp_variance_prior=None,
+        noise_gp_lengthscale=0.1,
+        noise_gp_variance=1.0,
+        noise_gp_noise=0,
+        non_centered=True,
+    ):
+        self.X_inducing = X_inducing
+        self.std_latent_noise = std_latent_noise
+        self.std_latent_noise_prior = std_latent_noise_prior
+        self.noise_gp = ExactGP(
+            kernel=RBFKernel(lengthscale=noise_gp_lengthscale, variance=noise_gp_variance),
+            noise=HomoscedasticNoise(variance=noise_gp_noise),
+            mean=ZeroMean(),
+        )
+        self.non_centered = non_centered
+
+        self.noise_gp_params = self.noise_gp.initialise_params(jax.random.PRNGKey(0), jnp.array([[0.0]]))
+
+    def train_noise(self, params):
+        params = params["noise"]
+        if self.non_centered:
+            latent_cov = self.noise_gp.kernel(self.noise_gp_params)(self.X_inducing, self.X_inducing)
+            latent_cov = latent_cov + jnp.eye(self.X_inducing.shape[0]) * (
+                jnp.jitter + self.noise_gp_params["noise"]["variance"]
+            )
+            latent_log_noise = jnp.linalg.cholesky(latent_cov) @ params["std_latent_noise"]
+            latent_noise = jnp.exp(latent_log_noise)
+        else:
+            latent_noise = jnp.exp(params["std_latent_noise"])
+
+        return latent_noise
+
+    def call(self, params, X):
+        if self.non_centered:
+            latent_cov = self.noise_gp.kernel(self.noise_gp_params)(self.X_inducing, self.X_inducing)
+            latent_cov = latent_cov + jnp.eye(self.X_inducing.shape[0]) * (
+                jnp.jitter + self.noise_gp_params["noise"]["variance"]
+            )
+            latent_log_noise = jnp.linalg.cholesky(latent_cov) @ params["noise"]["std_latent_noise"]
+        else:
+            latent_log_noise = params["noise"]["std_latent_noise"]
+        pred_log_noise = self.noise_gp.predict(
+            self.noise_gp_params, self.X_inducing, latent_log_noise, X, return_cov=False
+        )
+        return jnp.exp(pred_log_noise).squeeze()
+
+    def __initialise_params__(self, key, X_inducing):
+        priors = self.__get_priors__()
+        params = {}
+
+        key, subkey = jax.random.split(key)
+
+        if self.std_latent_noise is None:
+            params["std_latent_noise"] = priors["std_latent_noise"].sample(subkey, (X_inducing.shape[0],))
+        else:
+            params["std_latent_noise"] = self.std_latent_noise
+        return params
+
+    def __get_bijectors__(self):
+        bijectors = {"std_latent_noise": Identity()}
+        return bijectors
+
+    def __get_priors__(self):
+        priors = {"std_latent_noise": self.std_latent_noise_prior}
         return priors

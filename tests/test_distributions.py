@@ -1,13 +1,16 @@
 import jax
 import jax.numpy as jnp
 
+# jax enable x64
+# jax.config.update("jax_enable_x64", True)
+
 import os
 
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 import pytest
 
-from gpax.distributions import Normal, Beta
+from gpax.distributions import Normal, Beta, Exponential, Gamma
 from gpax.bijectors import Log, Exp, Sigmoid
 
 import tensorflow_probability.substrates.jax as tfp
@@ -16,52 +19,40 @@ tfd = tfp.distributions
 tfb = tfp.bijectors
 
 
-@pytest.mark.parametrize("loc", [0.0, 1.0, 2.0])
-@pytest.mark.parametrize("scale", [0.1, 0.5, 1.0])
-@pytest.mark.parametrize("bijector, tfb_bijector", [(Exp(), tfb.Exp())])
-def test_normal(loc, scale, bijector, tfb_bijector):
-    scalar = jax.random.normal(jax.random.PRNGKey(0))
-    tensor = jax.random.normal(jax.random.PRNGKey(1), (2, 3, 5))
+normal1 = (Normal, tfd.Normal, {"loc": 0.3, "scale": 1.2})
+normal2 = (Normal, tfd.Normal, {"loc": 1.6, "scale": 2.9})
+beta1 = (Beta, tfd.Beta, {"concentration0": 0.3, "concentration1": 1.2})
+beta2 = (Beta, tfd.Beta, {"concentration0": 1.6, "concentration1": 2.9})
+gamma1 = (Gamma, tfd.Gamma, {"concentration": 0.3, "rate": 1.2})
+gamma2 = (Gamma, tfd.Gamma, {"concentration": 1.6, "rate": 2.9})
+exp1 = (Exponential, tfd.Exponential, {"rate": 0.3})
+exp2 = (Exponential, tfd.Exponential, {"rate": 1.6})
 
-    normal = Normal(loc=loc, scale=scale)
-    tfd_normal = tfd.Normal(loc=loc, scale=scale)
 
-    assert jnp.allclose(normal.log_prob(scalar), tfd_normal.log_prob(scalar))
-    assert jnp.allclose(normal.log_prob(tensor), tfd_normal.log_prob(tensor))
+@pytest.mark.parametrize("our_dist, tfd_dist, params", [normal1, normal2, beta1, beta2, gamma1, gamma2, exp1, exp2])
+def test_distribution(our_dist, tfd_dist, params):
+    our_dist = our_dist(**params)
+    tfd_dist = tfd_dist(**params)
 
-    transformed_normal = bijector(normal)
-    tfd_transformed_normal = tfb_bijector(tfd_normal)
+    samples = our_dist.sample(seed=jax.random.PRNGKey(0), sample_shape=(100,))
+    assert jnp.allclose(our_dist.log_prob(samples), tfd_dist.log_prob(samples), atol=1e-6)
 
+    samples = tfd_dist.sample(seed=jax.random.PRNGKey(0), sample_shape=(100,))
+    assert jnp.allclose(our_dist.log_prob(samples), tfd_dist.log_prob(samples), atol=1e-6)
+
+
+@pytest.mark.parametrize("our_dist, tfd_dist, params", [normal1, normal2, beta1, beta2, gamma1, gamma2, exp1, exp2])
+@pytest.mark.parametrize("our_bijector, tfb_bijector", [(Exp(), tfb.Exp()), (Sigmoid(), tfb.Sigmoid())])
+def test_transformed_distribution(our_dist, tfd_dist, params, our_bijector, tfb_bijector):
+    our_dist = our_bijector(our_dist(**params))
+    tfd_dist = tfb_bijector(tfd_dist(**params))
+
+    samples = our_dist.sample(seed=jax.random.PRNGKey(0), sample_shape=(100,))
     assert jnp.allclose(
-        transformed_normal.log_prob(bijector(scalar)), tfd_transformed_normal.log_prob(tfb_bijector(scalar))
+        our_dist.log_prob(samples),
+        tfd_dist.log_prob(samples),
+        atol=1e-1,
     )
-    assert jnp.allclose(
-        transformed_normal.log_prob(bijector(tensor)), tfd_transformed_normal.log_prob(tfb_bijector(tensor))
-    )
 
-
-@pytest.mark.parametrize("concentration0", [0.1, 1.0, 2.0])
-@pytest.mark.parametrize("concentration1", [0.1, 1.2, 2.0])
-@pytest.mark.parametrize("bijector, tfb_bijector", [(Log(), tfb.Log()), (Sigmoid(), tfb.Sigmoid())])
-def test_beta(concentration0, concentration1, bijector, tfb_bijector):
-    scalar = jax.random.uniform(jax.random.PRNGKey(0))
-    tensor = jax.random.uniform(jax.random.PRNGKey(1), (2, 3, 5))
-
-    beta = Beta(concentration0=concentration0, concentration1=concentration1)
-    tfd_beta = tfd.Beta(concentration0=concentration0, concentration1=concentration1)
-
-    assert jnp.allclose(beta.log_prob(scalar), tfd_beta.log_prob(scalar))
-    assert jnp.allclose(beta.log_prob(tensor), tfd_beta.log_prob(tensor))
-
-    transformed_beta = bijector(beta)
-    tfd_transformed_beta = tfb_bijector(tfd_beta)
-
-    assert jnp.allclose(
-        transformed_beta.log_prob(bijector(scalar)), tfd_transformed_beta.log_prob(tfb_bijector(scalar))
-    )
-    assert jnp.allclose(
-        transformed_beta.log_prob(bijector(tensor)),
-        tfd_transformed_beta.log_prob(tfb_bijector(tensor)),
-        rtol=1e-4,
-        atol=1e-4,
-    )
+    samples = tfd_dist.sample(seed=jax.random.PRNGKey(0), sample_shape=(100,))
+    assert jnp.allclose(our_dist.log_prob(samples), tfd_dist.log_prob(samples), atol=1e-1)

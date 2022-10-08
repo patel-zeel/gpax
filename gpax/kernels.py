@@ -53,7 +53,7 @@ class Kernel(Base):
     def _identify_and_initiaise_params(self, key, X=None, X_inducing=None):
         if self.__class__.__name__ in ["SumKernel", "ProductKernel"]:
             return self.__initialise_params__(key, X=X, X_inducing=X_inducing)
-        elif self.__class__.__name__ == "GibbsKernel":
+        elif self.__class__.__name__ in ["GibbsKernel", "HeinonenGibbsKernel"]:
             return self.__initialise_params__(key, X_inducing=X_inducing)
         else:
             return self.__initialise_params__(key, X=X)

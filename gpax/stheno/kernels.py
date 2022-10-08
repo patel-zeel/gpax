@@ -28,7 +28,7 @@ class GibbsKernel(Kernel):
         f = jax.vmap(self.predict_scale_per_dim, in_axes=(None, 1, 0, 1))
         return f(x, self.X_inducing, self.params["scale_gp"], self.params["latent_log_scale"])
 
-    def predict_var(self, x):
+    def predict_variance(self, x):
         variance_gp = ExactGP()
         return B.exp(
             variance_gp.predict(
@@ -59,7 +59,7 @@ class GibbsKernel(Kernel):
         exp_part = B.exp(-0.5 * ((x1 - x2) ** 2).sum())
 
         if self.flex_variance:
-            predict_fn = jax.jit(self.predict_var)
+            predict_fn = jax.jit(self.predict_variance)
             var1 = predict_fn(x1)
             var2 = predict_fn(x2)
             variance_part = var1 * var2
