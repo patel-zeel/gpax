@@ -82,9 +82,14 @@ class ExactGP(AbstractGP):
         rows, columns = jnp.diag_indices_from(K)
         return K.at[rows, columns].set(K[rows, columns] + noise + jnp.jitter)
 
-    def log_probability(self, params, X, y):
+    def log_probability(self, params, X, y, include_prior=True):
+        prior_log_prob = 0.0
         if self.noise.__class__.__name__ == "HeinonenHeteroscedasticNoise":
-            noise = self.noise.train_noise(params)
+            if include_prior:
+                noise, tmp_prior_log_prob = self.noise.train_noise(params, return_prior_log_prob=True)
+                prior_log_prob += tmp_prior_log_prob
+            else:
+                noise = self.noise.train_noise(params)
         else:
             noise = self.noise(params, X)
         if self.mean.__class__.__name__ == "ZeroMean":
@@ -92,7 +97,11 @@ class ExactGP(AbstractGP):
         else:
             mean = self.mean(params)
         if self.kernel.__class__.__name__ == "HeinonenGibbsKernel":
-            covariance = self.kernel.train_cov(params)
+            if include_prior:
+                covariance, tmp_prior_log_prob = self.kernel.train_cov(params, return_prior_log_prob=True)
+                prior_log_prob += tmp_prior_log_prob
+            else:
+                covariance = self.kernel.train_cov(params)
         else:
             kernel = self.kernel(params)
             covariance = kernel(X, X)
@@ -111,7 +120,7 @@ class ExactGP(AbstractGP):
         #     -2 * jnp.log(chol.diagonal()).sum(),
         #     -y.shape[0] * jnp.log(2 * jnp.pi),
         # )
-        return log_likelihood
+        return log_likelihood + prior_log_prob
 
     def log_prior(self, params):
         log_prior = get_raw_log_prior(self.priors, params, self.constraints)
