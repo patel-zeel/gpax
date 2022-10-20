@@ -3,7 +3,7 @@ import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
 import jax.tree_util as tree_util
 import optax
-from gpax.distributions import Zero
+from gpax.distributions import NoPrior, TransformedDistribution
 
 distance_jitter = 0.0
 
@@ -16,15 +16,15 @@ def distance(X1, X2):
     return jnp.sqrt(squared_distance(X1, X2) + distance_jitter)
 
 
-def randomize(params, priors, bijectors, key):
+def randomize(params, priors, bijectors, key, generic_sampler=jax.random.normal):
     seeds = seeds_like(params, key)
 
     def _randomize(param, prior, bijector, seed):
-        sample = prior.sample(seed=seed, sample_shape=param.shape)
-        if prior.__class__.__name__ == "Zero":
+        if isinstance(prior, NoPrior):
+            sample = generic_sampler(seed, param.shape)
             return bijector(sample)
         else:
-            return sample
+            return prior.sample(seed=seed, sample_shape=param.shape)
 
     return tree_util.tree_map(
         lambda param, prior, bijector, seed: _randomize(param, prior, bijector, seed), params, priors, bijectors, seeds
@@ -45,16 +45,16 @@ def unconstrain(params, bijectors):
     return tree_util.tree_map(lambda param, bijector: bijector.inverse(param), params, bijectors)
 
 
-def is_zero_prior(prior):
-    if prior.__class__.__name__ == "TransformedDistribution":
-        return is_zero_prior(prior.distribution)
+def is_no_prior(prior):
+    if isinstance(prior, TransformedDistribution):
+        return is_no_prior(prior.distribution)
     else:
-        return prior.__class__.__name__ == "Zero"
+        return isinstance(prior, NoPrior)
 
 
 def get_raw_log_prior(priors, params, bijectors):
     def _get_raw_log_prior(prior, param, bijector):
-        if is_zero_prior(prior):
+        if is_no_prior(prior):
             return prior.log_prob(param)
         else:
             return prior.log_prob(param) - bijector.inverse_log_jacobian(param)
@@ -88,7 +88,7 @@ def train_fn(loss_fn, init_raw_params, optimizer, num_epochs=1, lax_scan=True):
         loss_history = []
         raw_params = init_raw_params
         grad_fn = jax.grad(loss_fn)
-        for epoch in range(num_epochs):
+        for _ in range(num_epochs):
             loss = loss_fn(raw_params)
             grads = grad_fn(raw_params)
             updates, state = optimizer.update(grads, state)

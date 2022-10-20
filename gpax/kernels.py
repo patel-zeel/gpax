@@ -8,7 +8,7 @@ from typing import List, Union
 from jaxtyping import Array
 from gpax.base import Base
 from gpax.utils import squared_distance, distance, get_raw_log_prior
-from gpax.distributions import Zero
+from gpax.distributions import NoPrior
 
 
 class Kernel(Base):
@@ -78,8 +78,8 @@ class SmoothKernel(Kernel):
         ARD=True,
         lengthscale=None,
         variance=None,
-        lengthscale_prior=Exp()(Zero()),
-        variance_prior=Exp()(Zero()),
+        lengthscale_prior=Exp()(NoPrior()),
+        variance_prior=Exp()(NoPrior()),
     ):
         super().__init__(active_dims, ARD)
         self.lengthscale = lengthscale

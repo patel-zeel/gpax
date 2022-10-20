@@ -3,7 +3,7 @@ import jax.tree_util as tree_util
 
 from gpax.base import Base
 from gpax.bijectors import Identity
-from gpax.distributions import Zero
+from gpax.distributions import NoPrior
 
 
 class Mean(Base):
@@ -25,7 +25,7 @@ class Mean(Base):
 
 
 class ScalarMean(Mean):
-    def __init__(self, value=None, value_prior=Zero()):
+    def __init__(self, value=None, value_prior=NoPrior()):
         self.value = value
         self.value_prior = value_prior
 

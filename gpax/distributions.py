@@ -29,7 +29,7 @@ class TransformedDistribution(Distribution):
             return self.distribution.log_prob(self.bijector.inverse(value)) + self.bijector.inverse_log_jacobian(value)
 
 
-class Zero(Distribution):
+class NoPrior(Distribution):
     def sample(self, seed, sample_shape=()):
         return jax.random.normal(seed, sample_shape)
 

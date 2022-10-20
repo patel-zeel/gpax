@@ -3,7 +3,7 @@ import jax.tree_util as tree_util
 
 from gpax.base import Base
 from gpax.bijectors import Exp
-from gpax.distributions import Zero
+from gpax.distributions import NoPrior
 from gpax.utils import get_raw_log_prior
 
 
@@ -34,7 +34,7 @@ class Noise(Base):
 
 
 class HomoscedasticNoise(Noise):
-    def __init__(self, variance=None, variance_prior=Exp()(Zero())):
+    def __init__(self, variance=None, variance_prior=Exp()(NoPrior())):
         self.variance = variance
         self.variance_prior = variance_prior
 

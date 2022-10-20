@@ -7,7 +7,7 @@ from jaxtyping import Array
 from gpax.gps import ExactGP
 from gpax.kernels import Kernel, RBFKernel
 from gpax.bijectors import Identity, Exp
-from gpax.distributions import Zero, Normal
+from gpax.distributions import NoPrior, Normal
 from gpax.noises import HomoscedasticNoise
 from gpax.means import ScalarMean, ZeroMean
 
@@ -27,8 +27,8 @@ class GibbsKernel(Kernel):
         std_latent_variance_prior=None,
         variance_scale_prior=None,
         variance_sigma_prior=None,
-        lengthscale_prior=Exp()(Zero()),
-        variance_prior=Exp()(Zero()),
+        lengthscale_prior=Exp()(NoPrior()),
+        variance_prior=Exp()(NoPrior()),
         train_latent_gp_noise=False,
         non_centered=True,
     ):
@@ -260,14 +260,14 @@ class GibbsKernel(Kernel):
         priors = {}
         if self.flex_scale:
             if self.X_inducing is not None:
-                priors["X_inducing"] = Zero()  # Dummy prior, never used for sampling
+                priors["X_inducing"] = NoPrior()  # Dummy prior, never used for sampling
             priors["scale_gp"] = self.scale_gp.get_priors()
             priors["std_latent_scale"] = self.std_latent_scale_prior
         else:
             priors["lengthscale"] = self.lengthscale_prior
         if self.flex_variance:
             if self.X_inducing is not None:
-                priors["X_inducing"] = Zero()  # Dummy prior, never used for sampling
+                priors["X_inducing"] = NoPrior()  # Dummy prior, never used for sampling
             priors["variance_gp"] = self.variance_gp.get_priors()
             priors["std_latent_variance"] = self.std_latent_variance_prior
         else:
@@ -278,15 +278,14 @@ class GibbsKernel(Kernel):
 class HeinonenGibbsKernel(Kernel):
     def __init__(
         self,
-        X_inducing,
         flex_scale=True,
         flex_variance=True,
         active_dims=None,
         ARD=True,
         std_latent_scale_prior=None,
         std_latent_variance_prior=None,
-        lengthscale_prior=Exp()(Zero()),
-        variance_prior=Exp()(Zero()),
+        lengthscale_prior=Exp()(NoPrior()),
+        variance_prior=Exp()(NoPrior()),
         train_latent_gp_noise=False,
         scale_gp_lengthscale=0.1,
         scale_gp_variance=1.0,
@@ -294,14 +293,11 @@ class HeinonenGibbsKernel(Kernel):
         variance_gp_lengthscale=0.1,
         variance_gp_variance=1.0,
         variance_gp_noise=0.0,
-        non_centered=True,
     ):
         super().__init__(active_dims=active_dims, ARD=ARD)
-        self.X_inducing = X_inducing
         self.flex_scale = flex_scale
         self.flex_variance = flex_variance
         self.train_latent_gp_noise = train_latent_gp_noise
-        self.non_centered = non_centered
 
         if self.flex_scale:
             self.std_latent_scale_prior = std_latent_scale_prior
@@ -326,36 +322,33 @@ class HeinonenGibbsKernel(Kernel):
             self.variance_prior = variance_prior
 
     def train_latent_log_variance_std(self, params):
-        if self.non_centered:
-            latent_cov = self.variance_gp.kernel(self.variance_gp_params)(self.X_inducing, self.X_inducing)
-            latent_cov = latent_cov + jnp.eye(self.X_inducing.shape[0]) * (
-                jnp.jitter + self.variance_gp_params["noise"]["variance"]
-            )
-            return jnp.linalg.cholesky(latent_cov) @ params["std_latent_variance_std"]
-        else:
-            return params["std_latent_variance_std"]
+        X_inducing = params["X_inducing"]
+        latent_cov = self.variance_gp.kernel(self.variance_gp_params)(X_inducing, X_inducing)
+        latent_cov = latent_cov + jnp.eye(X_inducing.shape[0]) * (
+            jnp.jitter + self.variance_gp_params["noise"]["variance"]
+        )
+        return jnp.linalg.cholesky(latent_cov) @ params["kernel"]["std_latent_variance_std"]
 
     def train_latent_log_lengthscale(self, params):
-        if self.non_centered:
-            latent_cov = self.scale_gp.kernel(self.scale_gp_params)(self.X_inducing, self.X_inducing)
-            latent_cov = latent_cov + jnp.eye(self.X_inducing.shape[0]) * (
-                jnp.jitter + self.scale_gp_params["noise"]["variance"]
-            )
-            return jnp.linalg.cholesky(latent_cov) @ params["std_latent_scale"]
-        else:
-            return params["std_latent_scale"]
+        X_inducing = params["X_inducing"]
+        latent_cov = self.scale_gp.kernel(self.scale_gp_params)(X_inducing, X_inducing)
+        latent_cov = latent_cov + jnp.eye(X_inducing.shape[0]) * (
+            jnp.jitter + self.scale_gp_params["noise"]["variance"]
+        )
+        return jnp.linalg.cholesky(latent_cov) @ params["kernel"]["std_latent_scale"]
 
     def train_cov(self, params, return_prior_log_prob=False):
-        params = params["kernel"]
+        X_inducing = params["X_inducing"]
+
         sqr_dist = (
-            (self.X_inducing**2).sum(axis=1, keepdims=1)
-            + (self.X_inducing**2).T.sum(axis=0, keepdims=1)
-            - 2.0 * self.X_inducing @ self.X_inducing.T
+            (X_inducing**2).sum(axis=1, keepdims=1)
+            + (X_inducing**2).T.sum(axis=0, keepdims=1)
+            - 2.0 * X_inducing @ X_inducing.T
         )
         prior_log_prob = 0.0
         if self.flex_scale:
             latent_Log_scale = self.train_latent_log_lengthscale(params)
-            prior_log_prob += self.scale_gp.log_probability(self.scale_gp_params, self.X_inducing, latent_Log_scale)
+            prior_log_prob += self.scale_gp.log_probability(self.scale_gp_params, X_inducing, latent_Log_scale)
             latent_scale = jnp.exp(latent_Log_scale).squeeze()
 
             l_avg_square = (latent_scale.reshape(1, -1) ** 2 + latent_scale.reshape(-1, 1) ** 2) / 2.0
@@ -365,18 +358,18 @@ class HeinonenGibbsKernel(Kernel):
 
         else:
             prefix_part = 1.0
-            exp_part = jnp.exp(-sqr_dist / (2.0 * params["lengthscale"] ** 2))
+            exp_part = jnp.exp(-sqr_dist / (2.0 * params["kernel"]["lengthscale"] ** 2))
 
         if self.flex_variance:
             latent_Log_variance_std = self.train_latent_log_variance_std(params)
             prior_log_prob += self.variance_gp.log_probability(
-                self.variance_gp_params, self.X_inducing, latent_Log_variance_std
+                self.variance_gp_params, X_inducing, latent_Log_variance_std
             )
             latent_variance_std = jnp.exp(latent_Log_variance_std).squeeze()
 
             variance_part = latent_variance_std.reshape(1, -1) * latent_variance_std.reshape(-1, 1)
         else:
-            variance_part = params["variance"]
+            variance_part = params["kernel"]["variance"]
 
         cov = prefix_part * exp_part * variance_part
         if return_prior_log_prob:
@@ -414,35 +407,29 @@ class HeinonenGibbsKernel(Kernel):
         return kernel_fn
 
     def predict_scale(self, params, x):
+        X_inducing = params["X_inducing"]
         params = params["kernel"]
 
-        if self.non_centered:
-            latent_cov = self.scale_gp.kernel(self.scale_gp_params)(self.X_inducing, self.X_inducing)
-            latent_cov = latent_cov + jnp.eye(self.X_inducing.shape[0]) * (
-                jnp.jitter + self.scale_gp_params["noise"]["variance"]
-            )
-            latent_Log_scale = jnp.linalg.cholesky(latent_cov) @ params["std_latent_scale"]
-        else:
-            latent_Log_scale = params["std_latent_scale"]
-
-        return jnp.exp(
-            self.scale_gp.predict(self.scale_gp_params, self.X_inducing, latent_Log_scale, x, return_cov=False)
+        latent_cov = self.scale_gp.kernel(self.scale_gp_params)(X_inducing, X_inducing)
+        latent_cov = latent_cov + jnp.eye(X_inducing.shape[0]) * (
+            jnp.jitter + self.scale_gp_params["noise"]["variance"]
         )
+        latent_Log_scale = jnp.linalg.cholesky(latent_cov) @ params["std_latent_scale"]
+
+        return jnp.exp(self.scale_gp.predict(self.scale_gp_params, X_inducing, latent_Log_scale, x, return_cov=False))
 
     def predict_variance_std(self, params, x):
+        X_inducing = params["X_inducing"]
         params = params["kernel"]
 
-        if self.non_centered:
-            latent_cov = self.variance_gp.kernel(self.variance_gp_params)(self.X_inducing, self.X_inducing)
-            latent_cov = latent_cov + jnp.eye(self.X_inducing.shape[0]) * (
-                jnp.jitter + self.variance_gp_params["noise"]["variance"]
-            )
-            latent_Log_variance_std = jnp.linalg.cholesky(latent_cov) @ params["std_latent_variance_std"]
-        else:
-            latent_Log_variance_std = params["std_latent_variance_std"]
+        latent_cov = self.variance_gp.kernel(self.variance_gp_params)(X_inducing, X_inducing)
+        latent_cov = latent_cov + jnp.eye(X_inducing.shape[0]) * (
+            jnp.jitter + self.variance_gp_params["noise"]["variance"]
+        )
+        latent_Log_variance_std = jnp.linalg.cholesky(latent_cov) @ params["std_latent_variance_std"]
 
         pred_log_variance_std = self.variance_gp.predict(
-            self.variance_gp_params, self.X_inducing, latent_Log_variance_std, x, return_cov=False
+            self.variance_gp_params, X_inducing, latent_Log_variance_std, x, return_cov=False
         )
 
         return jnp.exp(pred_log_variance_std)
