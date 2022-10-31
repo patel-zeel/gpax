@@ -6,7 +6,7 @@ import jax.scipy as jsp
 
 class Distribution:
     @abstractmethod
-    def sample(self, seed, sample_shape=()):
+    def sample(self, seed, sample_shape):
         NotImplementedError("This method must be implemented by a subclass.")
 
     @abstractmethod
@@ -19,22 +19,11 @@ class TransformedDistribution(Distribution):
         self.distribution = distribution
         self.bijector = bijector
 
-    def sample(self, seed, sample_shape=()):
+    def sample(self, seed, sample_shape):
         return self.bijector(self.distribution.sample(seed, sample_shape))
 
     def log_prob(self, value):
-        if self.distribution.__class__.__name__ == "Zero":
-            return jnp.zeros_like(value)
-        else:
-            return self.distribution.log_prob(self.bijector.inverse(value)) + self.bijector.inverse_log_jacobian(value)
-
-
-class NoPrior(Distribution):
-    def sample(self, seed, sample_shape=()):
-        return jax.random.normal(seed, sample_shape)
-
-    def log_prob(self, value):
-        return jnp.zeros_like(value)
+        return self.distribution.log_prob(self.bijector.inverse(value)) + self.bijector.inverse_log_jacobian(value)
 
 
 class Normal(Distribution):
@@ -42,11 +31,23 @@ class Normal(Distribution):
         self.loc = loc
         self.scale = scale
 
-    def sample(self, seed, sample_shape=()):
+    def sample(self, seed, sample_shape):
         return self.loc + jax.random.normal(seed, sample_shape) * self.scale
 
     def log_prob(self, value):
         return jsp.stats.norm.logpdf(value, loc=self.loc, scale=self.scale)
+
+
+class Uniform(Distribution):
+    def __init__(self, low=0.0, high=1.0):
+        self.low = low
+        self.high = high
+
+    def sample(self, seed, sample_shape):
+        return jax.random.uniform(seed, sample_shape, minval=self.low, maxval=self.high)
+
+    def log_prob(self, value):
+        return jsp.stats.uniform.logpdf(value, loc=self.low, scale=self.high - self.low)
 
 
 class Gamma(Distribution):
@@ -54,7 +55,7 @@ class Gamma(Distribution):
         self.concentration = concentration
         self.rate = rate
 
-    def sample(self, seed, sample_shape=()):
+    def sample(self, seed, sample_shape):
         return jax.random.gamma(seed, shape=sample_shape, a=self.concentration) / self.rate
 
     def log_prob(self, value):
@@ -63,10 +64,11 @@ class Gamma(Distribution):
 
 class Beta(Distribution):
     def __init__(self, concentration0, concentration1):
+
         self.concentration0 = concentration0
         self.concentration1 = concentration1
 
-    def sample(self, seed, sample_shape=()):
+    def sample(self, seed, sample_shape):
         return jax.random.beta(seed, a=self.concentration1, b=self.concentration0, shape=sample_shape)
 
     def log_prob(self, value):
@@ -75,9 +77,10 @@ class Beta(Distribution):
 
 class Exponential(Distribution):
     def __init__(self, rate):
+
         self.rate = rate
 
-    def sample(self, seed, sample_shape=()):
+    def sample(self, seed, sample_shape):
         return jax.random.exponential(seed, shape=sample_shape) / self.rate
 
     def log_prob(self, value):
@@ -86,10 +89,11 @@ class Exponential(Distribution):
 
 class Frechet(Distribution):
     def __init__(self, rate, dim):
+
         self.rate = rate
         self.dim = dim
 
-    def sample(self, seed, sample_shape=()):
+    def sample(self, seed, sample_shape):
         samples = jax.random.uniform(key=seed, shape=sample_shape)
         return self.inverse_cdf(samples)
 

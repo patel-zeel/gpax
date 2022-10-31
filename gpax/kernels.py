@@ -1,68 +1,34 @@
 import jax
 import jax.numpy as jnp
-import jax.tree_util as tree_util
 
-from gpax.bijectors import Identity, Exp
-
-from typing import List, Union
-from jaxtyping import Array
-from gpax.base import Base
-from gpax.utils import squared_distance, distance, get_raw_log_prior
-from gpax.distributions import NoPrior
+from gpax.core import Base, get_raw_log_prior, get_positive_bijector
+from gpax.utils import squared_distance, distance
 
 
 class Kernel(Base):
-    def __init__(self, active_dims=None, ARD=True):
-        self.active_dims = active_dims
-        self.ARD = ARD
-
-    def __call__(self, params):
-        if self.active_dims is None:
-            raise ValueError(
-                "active_dims must not be None. It is set automatically on calling _initialise_params() or must be specified manually."
-            )
-        kernel_fn = self.call(params)
-        kernel_fn = jax.vmap(kernel_fn, in_axes=(None, 0))
-        kernel_fn = jax.vmap(kernel_fn, in_axes=(0, None))
-        return self.select(kernel_fn)
-
     def select(self, kernel_fn):
         def _select(X1, X2):
-            # print(X1.shape, X2.shape)
+            assert self.active_dims is not None, "active_dims must not be None"
             X1 = X1[:, self.active_dims]
             X2 = X2[:, self.active_dims]
             return kernel_fn(X1, X2)
 
         return _select
 
-    def initialise_params(self, key, X=None, X_inducing=None):
-        if X is not None:
-            if self.active_dims is None:
-                self.active_dims = list(range(X.shape[1]))
-            assert set(self.active_dims) - set(range(X.shape[1])) == set(), "active_dims must be a subset of X.shape[1]"
-        if X_inducing is not None:
-            if self.active_dims is None:
-                self.active_dims = list(range(X_inducing.shape[1]))
-            assert (
-                set(self.active_dims) - set(range(X_inducing.shape[1])) == set()
-            ), "active_dims must be a subset of X.shape[1]"
-        assert len(set(self.active_dims)) == len(self.active_dims), "active_dims must be unique"
-        params = {"kernel": self._identify_and_initiaise_params(key, X, X_inducing)}
-        return tree_util.tree_map(lambda x: jnp.asarray(x), params)
-
-    def _identify_and_initiaise_params(self, key, X=None, X_inducing=None):
-        if self.__class__.__name__ in ["SumKernel", "ProductKernel"]:
-            return self.__initialise_params__(key, X=X, X_inducing=X_inducing)
-        elif self.__class__.__name__ in ["GibbsKernel", "HeinonenGibbsKernel"]:
-            return self.__initialise_params__(key, X_inducing=X_inducing)
+    def set_active_dims(self, aux):
+        if self.active_dims is not None:
+            pass
         else:
-            return self.__initialise_params__(key, X=X)
+            if "X" in aux:
+                self.active_dims = list(range(aux["X"].shape[1]))
+            elif "X_inducing" in aux:
+                self.active_dims = list(range(aux["X_inducing"].shape[1]))
+            else:
+                raise ValueError("aux must contain X or X_inducing")
 
-    def get_bijectors(self):
-        return {"kernel": self.__get_bijectors__()}
-
-    def get_priors(self):
-        return {"kernel": self.__get_priors__()}
+    def __call__(self, params, penalty=None):
+        kernel_fn = self.call(params, penalty)
+        return self.select(kernel_fn)
 
     def __add__(self, other):
         return SumKernel(k1=self, k2=other)
@@ -76,67 +42,57 @@ class SmoothKernel(Kernel):
         self,
         active_dims=None,
         ARD=True,
-        lengthscale=None,
-        variance=None,
-        lengthscale_prior=Exp()(NoPrior()),
-        variance_prior=Exp()(NoPrior()),
+        lengthscale=1.0,
+        variance=1.0,
+        lengthscale_prior=None,
+        variance_prior=None,
     ):
-        super().__init__(active_dims, ARD)
+        self.active_dims = active_dims
+        self.ARD = ARD
         self.lengthscale = lengthscale
         self.variance = variance
-        self.lengthscale_prior = lengthscale_prior
-        self.variance_prior = variance_prior
 
-    def call(self, params):
-        params = params["kernel"]
-        return self.get_kernel_fn(params)
+        self.constraints = {"lengthscale": get_positive_bijector(), "variance": get_positive_bijector()}
+        self.priors = {"lengthscale": lengthscale_prior, "variance": variance_prior}
 
-    def log_prior(self, params, bijectors):
-        params = params["kernel"]
-        bijectors = bijectors["kernel"]
-        return {"kernel": get_raw_log_prior(params, bijectors, self.prior)}
+    def call(self, params, penalty=None):
+        kernel_fn = self.get_kernel_fn(params)
+        kernel_fn = jax.vmap(kernel_fn, in_axes=(None, 0))
+        kernel_fn = jax.vmap(kernel_fn, in_axes=(0, None))
 
-    def __initialise_params__(self, key, X):
+        if penalty is None:
+            return kernel_fn
+        else:
+            return lambda X1, X2: kernel_fn(X1, X2), jnp.zeros(())
+
+    def log_prior(self, params):
+        return get_raw_log_prior(params, self.constraints, self.priors)
+
+    def __initialize_params__(self, aux):
+        self.set_active_dims(aux)
+        lengthscale = jnp.asarray(self.lengthscale)
+        variance = jnp.asarray(self.variance)
+
         params = {}
-        priors = self.__get_priors__()
-        keys = jax.random.split(key, 2)
         if self.ARD:
-            if self.lengthscale is not None:
-                lengthscale = jnp.asarray(self.lengthscale)
-                if lengthscale.shape == (len(self.active_dims),):
-                    params["lengthscale"] = lengthscale
-                elif lengthscale.squeeze().shape == ():
-                    params["lengthscale"] = lengthscale.squeeze().repeat(len(self.active_dims))
-                else:
-                    raise ValueError("lengthscale must be either a scalar or an array of shape (len(active_dims),).")
+            if lengthscale.shape == (len(self.active_dims),):
+                params["lengthscale"] = lengthscale
+            elif lengthscale.squeeze().shape == ():
+                params["lengthscale"] = lengthscale.squeeze().repeat(len(self.active_dims))
             else:
-                params["lengthscale"] = priors["lengthscale"].sample(
-                    seed=keys[0], sample_shape=(len(self.active_dims),)
-                )
+                raise ValueError("lengthscale must be either a scalar or an array of shape (len(active_dims),).")
         else:
-            if self.lengthscale is not None:
-                lengthscale = jnp.asarray(self.lengthscale)
-                if lengthscale.squeeze().shape == ():
-                    params["lengthscale"] = lengthscale.squeeze()
-                else:
-                    raise ValueError("lengthscale must be a scalar when ARD=False.")
+            if lengthscale.squeeze().shape == ():
+                params["lengthscale"] = lengthscale.squeeze()
             else:
-                params["lengthscale"] = priors["lengthscale"].sample(seed=keys[0])
-        if self.variance is not None:
-            variance = jnp.asarray(self.variance)
-            if variance.squeeze().shape == ():
-                params["variance"] = variance.squeeze()
-            else:
-                raise ValueError("variance must be a scalar.")
+                raise ValueError("lengthscale must be a scalar when ARD=False.")
+
+        if variance.squeeze().shape == ():
+            params["variance"] = variance.squeeze()
         else:
-            params["variance"] = priors["variance"].sample(seed=keys[1])
+            raise ValueError("variance must be a scalar.")
+
         return params
-
-    def __get_bijectors__(self):
-        return {"lengthscale": Exp(), "variance": Exp()}
-
-    def __get_priors__(self):
-        return {"lengthscale": self.lengthscale_prior, "variance": self.variance_prior}
 
 
 class RBFKernel(SmoothKernel):
@@ -202,8 +158,17 @@ class Matern52Kernel(SmoothKernel):
 
 
 class PolynomialKernel(SmoothKernel):
-    def __init__(self, active_dims=None, ARD=True, lengthscale=1.0, variance=1.0, order=1.0):
-        super().__init__(active_dims, ARD, lengthscale, variance)
+    def __init__(
+        self,
+        active_dims=None,
+        ARD=True,
+        lengthscale=1.0,
+        variance=1.0,
+        order=1.0,
+        lengthscale_prior=None,
+        variance_prior=None,
+    ):
+        super().__init__(active_dims, ARD, lengthscale, variance, lengthscale_prior, variance_prior)
         self.order = order
 
     def get_kernel_fn(self, params):
@@ -219,69 +184,47 @@ class PolynomialKernel(SmoothKernel):
 
 
 class MathOperationKernel(Kernel):
-    def __init__(self, k1, k2, active_dims=None, ARD=True):
-        super().__init__(active_dims, ARD)
+    def __init__(self, k1, k2):
         self.k1 = k1
         self.k2 = k2
 
-    def call(self, params):
-        params = params["kernel"]
+        self.constraints = {"k1": self.k1.constraints, "k2": self.k2.constraints}
+        self.priors = {"k1": self.k1.priors, "k2": self.k2.priors}
 
+    def call(self, params, penalty=None):
         def kernel_fn(X1, X2):
-            k1 = self.k1.call(params["k1"])(X1, X2)
-            k2 = self.k2.call(params["k2"])(X1, X2)
-            return self.function(k1, k2)
+            k1 = self.k1.call(params["k1"], penalty)
+            k2 = self.k2.call(params["k2"], penalty)
+            if penalty is None:
+                cov1 = k1(X1, X2)
+                cov2 = k2(X1, X2)
+                return self.operation(cov1, cov2)
+            else:
+                cov1, penalty1 = k1(X1, X2)
+                cov2, penalty2 = k2(X1, X2)
+                return self.operation(cov1, cov2), penalty1 + penalty2
 
         return kernel_fn
 
-    def __call__(self, params):  # Override to allow for different active_dims
-        if self.active_dims is None:
-            raise ValueError(
-                "active_dims must not be None. It is set automatically on calling initialise_params() or must be specified manually."
-            )
-        kernel_fn = self.call(params)
-        kernel_fn = jax.vmap(kernel_fn, in_axes=(None, 0))
-        kernel_fn = jax.vmap(kernel_fn, in_axes=(0, None))
-        return kernel_fn
-
-    def subkernel_initialise(self, kernel, key, X, X_inducing):
-        if kernel.__class__.__name__ in ["SumKernel", "ProductKernel"]:
-            return kernel.initialise_params(key, X=X, X_inducing=X_inducing)
-        elif kernel.__class__.__name__ == "GibbsKernel":
-            return kernel.initialize_params(key, X_inducing=X_inducing)
-        else:
-            return kernel.initialise_params(key, X=X)
-
-    def __initialise_params__(self, key, X, X_inducing):
-        if self.k1.active_dims is None:
-            self.k1.active_dims = self.active_dims
-        if self.k2.active_dims is None:
-            self.k2.active_dims = self.active_dims
-        keys = jax.random.split(key, 2)
+    def __initialize_params__(self, aux):
         return {
-            "k1": self.k1.initialise_params(key=keys[0], X=X, X_inducing=X_inducing),
-            "k2": self.k2.initialise_params(key=keys[1], X=X, X_inducing=X_inducing),
+            "k1": self.k1.__initialize_params__(aux),
+            "k2": self.k2.__initialize_params__(aux),
         }
 
-    def __get_bijectors__(self):
-        return {"k1": self.k1.get_bijectors(), "k2": self.k2.get_bijectors()}
-
-    def __get_priors__(self):
-        return {"k1": self.k1.get_priors(), "k2": self.k2.get_priors()}
-
     def __repr__(self) -> str:
-        return f"({self.k1} {self.operation} {self.k2})"
+        return f"({self.k1} {self.symbol} {self.k2})"
 
 
 class ProductKernel(MathOperationKernel):
-    def __init__(self, k1, k2, active_dims=None, ARD=True):
-        super().__init__(k1, k2, active_dims, ARD)
-        self.function = lambda k1, k2: k1 * k2
-        self.operation = "x"
+    def __init__(self, k1, k2):
+        super().__init__(k1, k2)
+        self.operation = lambda k1, k2: k1 * k2
+        self.symbol = "x"
 
 
 class SumKernel(MathOperationKernel):
-    def __init__(self, k1, k2, active_dims=None, ARD=True):
-        super().__init__(k1, k2, active_dims, ARD)
-        self.function = lambda k1, k2: k1 + k2
-        self.operation = "+"
+    def __init__(self, k1, k2):
+        super().__init__(k1, k2)
+        self.operation = lambda k1, k2: k1 + k2
+        self.symbol = "+"

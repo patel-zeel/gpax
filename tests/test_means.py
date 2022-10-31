@@ -4,22 +4,24 @@ os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 import pytest
 import jax
-import jax.tree_util as tree_util
 import jax.numpy as jnp
 
-from gpax import ScalarMean
-from gpax.bijectors import Identity
+from gpax.means import ScalarMean, ZeroMean
+from gpax.core import get_default_bijector
 from tests.utils import assert_same_pytree
 
 
-@pytest.mark.parametrize("value, expected", [(None, 0.0), (1.0, 1.0)])
-def test_initialise(value, expected):
-    mean = ScalarMean(value=value)
-    key = jax.random.PRNGKey(0)
-    params = mean.initialise_params(key)
-    params_expected = {"mean": {"value": jnp.array(expected)}}
-    assert_same_pytree(params, params_expected)
+@pytest.mark.parametrize(
+    "Mean, kwargs, expected, bijectors_expected",
+    [
+        (ScalarMean, {"value": 0.0}, {"value": jnp.zeros(())}, {"value": get_default_bijector()}),
+        (ScalarMean, {"value": 1.0}, {"value": jnp.ones(())}, {"value": get_default_bijector()}),
+        (ZeroMean, {}, {}, {}),
+    ],
+)
+def test_initialize(Mean, kwargs, expected, bijectors_expected):
+    mean = Mean(**kwargs)
+    params = mean.initialize_params(aux={"y": jnp.array([1.0, 2.0, 3.0])})
 
-    bijectors = mean.get_bijectors()
-    bijectors_expected = {"mean": {"value": Identity()}}
-    assert_same_pytree(bijectors, bijectors_expected)
+    assert_same_pytree(params, expected)
+    assert_same_pytree(mean.constraints, bijectors_expected)

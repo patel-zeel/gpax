@@ -1,11 +1,20 @@
 import jax
 import jax.numpy as jnp
-from jax.flatten_util import ravel_pytree
-import jax.tree_util as tree_util
+import jax.tree_util as jtu
 import optax
-from gpax.distributions import NoPrior, TransformedDistribution
 
 distance_jitter = 0.0
+
+
+def add_noise(K, noise, jitter):
+    rows, columns = jnp.diag_indices_from(K)
+    return K.at[rows, columns].set(K[rows, columns] + noise + jitter)
+
+
+def vectorized_fn(fn, value, shape):
+    for _ in shape:
+        fn = jax.vmap(fn)
+    return fn(value)
 
 
 def squared_distance(X1, X2):
@@ -13,55 +22,7 @@ def squared_distance(X1, X2):
 
 
 def distance(X1, X2):
-    return jnp.sqrt(squared_distance(X1, X2) + distance_jitter)
-
-
-def randomize(params, priors, bijectors, key, generic_sampler=jax.random.normal):
-    seeds = seeds_like(params, key)
-
-    def _randomize(param, prior, bijector, seed):
-        if isinstance(prior, NoPrior):
-            sample = generic_sampler(seed, param.shape)
-            return bijector(sample)
-        else:
-            return prior.sample(seed=seed, sample_shape=param.shape)
-
-    return tree_util.tree_map(
-        lambda param, prior, bijector, seed: _randomize(param, prior, bijector, seed), params, priors, bijectors, seeds
-    )
-
-
-def seeds_like(params, key):
-    values, treedef = tree_util.tree_flatten(params)
-    keys = [key for key in jax.random.split(key, len(values))]
-    return tree_util.tree_unflatten(treedef, keys)
-
-
-def constrain(params, bijectors):
-    return tree_util.tree_map(lambda param, bijector: bijector(param), params, bijectors)
-
-
-def unconstrain(params, bijectors):
-    return tree_util.tree_map(lambda param, bijector: bijector.inverse(param), params, bijectors)
-
-
-def is_no_prior(prior):
-    if isinstance(prior, TransformedDistribution):
-        return is_no_prior(prior.distribution)
-    else:
-        return isinstance(prior, NoPrior)
-
-
-def get_raw_log_prior(priors, params, bijectors):
-    def _get_raw_log_prior(prior, param, bijector):
-        if is_no_prior(prior):
-            return prior.log_prob(param)
-        else:
-            return prior.log_prob(param) - bijector.inverse_log_jacobian(param)
-
-    return tree_util.tree_map(
-        lambda prior, param, bijector: _get_raw_log_prior(prior, param, bijector), priors, params, bijectors
-    )
+    return jnp.sqrt(squared_distance(X1, X2))
 
 
 def train_fn(loss_fn, init_raw_params, optimizer, num_epochs=1, lax_scan=True):
@@ -102,3 +63,11 @@ def train_fn(loss_fn, init_raw_params, optimizer, num_epochs=1, lax_scan=True):
         "raw_params_history": raw_params_history,
         "loss_history": loss_history,
     }
+
+
+def constrain(params, bijectors):
+    return jtu.tree_map(lambda param, bijector: bijector(param), params, bijectors)
+
+
+def unconstrain(params, bijectors):
+    return jtu.tree_map(lambda param, bijector: bijector.inverse(param), params, bijectors)

@@ -1,25 +1,20 @@
 from ._version import version as __version__  # noqa
 
+import os
 import warnings
-from gpax.kernels import (
-    RBFKernel,
-    Matern12Kernel,
-    Matern32Kernel,
-    Matern52Kernel,
-    PolynomialKernel,
-)
-from gpax.gps import ExactGP, SparseGP
-from gpax.noises import HomoscedasticNoise
-from gpax.means import ScalarMean
-from gpax.special_kernels import GibbsKernel, HeinonenGibbsKernel
-from gpax.special_noises import HeteroscedasticNoise, HeinonenHeteroscedasticNoise
 
 import jax
 import jax.numpy as jnp
 
-jnp.jitter = jnp.array(1e-6)
+from gpax.core import set_default_jitter, set_default_prior, set_positive_bijector, set_default_bijector
+import gpax.distributions as gd
+import gpax.bijectors as gb
 
-warnings.warn(f"jnp.jitter={jnp.jitter}")
+## Set defaults
+set_default_prior(gd.Normal)
+set_default_bijector(gb.Identity)
+set_positive_bijector(gb.Exp)
 
-jax.config.update("jax_enable_x64", True)
-warnings.warn(f"64-bit precision={jax.config.read('jax_enable_x64')}")
+DEFAULT_JITTER = 1e-6
+
+set_default_jitter(DEFAULT_JITTER)

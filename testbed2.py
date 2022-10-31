@@ -14,7 +14,7 @@ gp = ExactGP(
     kernel=GibbsKernel(flex_scale=False, flex_variance=False, active_dims=[0, 1]),
     noise=HomoscedasticNoise(variance=0.1),
 )
-params = gp.initialise_params(key=jax.random.PRNGKey(0), X=x)
+params = gp.initialize_params(key=jax.random.PRNGKey(0), X=x)
 params["kernel"]["lengthscale"] = 0.8
 params["kernel"]["variance"] = 0.5
 print(gp.predict(params, x, y, x_test, return_cov=False))

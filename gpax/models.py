@@ -1,108 +1,60 @@
-from abc import abstractmethod
-
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 from jax.flatten_util import ravel_pytree
 
-from gpax.kernels import RBFKernel
-from gpax.means import ScalarMean
-from gpax.noises import HomoscedasticNoise
-from gpax.distributions import NoPrior
-from gpax.bijectors import Identity
 from gpax.utils import constrain, unconstrain
 
-from gpax.utils import get_raw_log_prior
+from gpax.core import Base, get_default_jitter
+from gpax.utils import add_noise
+
+JITTER = get_default_jitter()
 
 
-class AbstractGP:
-    def __init__(self, kernel=RBFKernel(), noise=HomoscedasticNoise(), mean=ScalarMean()):
-        self.kernel = kernel
-        self.noise = noise
-        self.mean = mean
-
-        self.constraints = self.get_bijectors()
-        self.priors = self.get_priors()
-
-    @abstractmethod
-    def log_probability(self, params, X, y):
-        return NotImplementedError("This method must be implemented by a subclass.")
-
-    @abstractmethod
-    def predict(self, params, X, X_new, return_cov=True, include_noise=True):
-        return NotImplementedError("This method must be implemented by a subclass.")
-
-    def initialise_params(self, key, X, X_inducing=None):
-        keys = jax.random.split(key, 4)
-        kernels_params = self.kernel.initialise_params(keys[0], X=X, X_inducing=X_inducing)
-
-        params = {
-            **self.mean.initialise_params(keys[1]),
-            **kernels_params,
-            **self.noise.initialise_params(keys[2], X_inducing=X_inducing),
-        }
-        return {**params, **self.__initialise_params__(keys[3], X=X, X_inducing=X_inducing)}
-
-    def __initialise_params__(self, key, X, X_inducing=None):
-        return NotImplementedError("This method must be implemented by a subclass.")
-
-    def get_bijectors(self):
-        bijectors = {
-            **self.mean.get_bijectors(),
-            **self.kernel.get_bijectors(),
-            **self.noise.get_bijectors(),
-        }
-        return {**bijectors, **self.__get_bijectors__()}
-
-    def get_priors(self):
-        priors = {
-            **self.mean.get_priors(),
-            **self.kernel.get_priors(),
-            **self.noise.get_priors(),
-        }
-        return {**priors, **self.__get_priors__()}
-
-    def __get_bijectors__(self):
-        return NotImplementedError("This method must be implemented by a subclass.")
-
+class Model(Base):
     def constrain(self, params):
         return constrain(params, self.constraints)
 
     def unconstrain(self, params):
         return unconstrain(params, self.constraints)
 
-    def add_noise(self, K, noise):
-        rows, columns = jnp.diag_indices_from(K)
-        return K.at[rows, columns].set(K[rows, columns] + noise + jnp.jitter)
 
+class ExactGPRegression(Model):
+    def __init__(self, kernel, likelihood, mean):
+        self.kernel = kernel
+        self.likelihood = likelihood
+        self.mean = mean
 
-class ExactGP(AbstractGP):
-    def log_probability(self, params, X, y, include_prior=True):
-        prior_log_prob = 0.0
-        if self.noise.__class__.__name__ == "HeinonenHeteroscedasticNoise":
-            if include_prior:
-                noise, tmp_prior_log_prob = self.noise.train_noise(params, return_prior_log_prob=True)
-                prior_log_prob += tmp_prior_log_prob
-            else:
-                noise = self.noise.train_noise(params)
-        else:
-            noise = self.noise(params, X)
-        if self.mean.__class__.__name__ == "ZeroMean":
-            mean = y.mean()
-        else:
-            mean = self.mean(params)
-        if self.kernel.__class__.__name__ == "HeinonenGibbsKernel":
-            if include_prior:
-                covariance, tmp_prior_log_prob = self.kernel.train_cov(params, return_prior_log_prob=True)
-                prior_log_prob += tmp_prior_log_prob
-            else:
-                covariance = self.kernel.train_cov(params)
-        else:
-            kernel = self.kernel(params)
-            covariance = kernel(X, X)
+        # constraints
+        self.constraints = {
+            "kernel": self.kernel.constraints,
+            "likelihood": self.likelihood.constraints,
+            "mean": self.mean.constraints,
+        }
 
+        # priors
+        self.priors = {"kernel": self.kernel.priors, "likelihood": self.likelihood.priors, "mean": self.mean.priors}
+
+    def __initialize_params__(self, aux):
+        return {
+            "kernel": self.kernel.__initialize_params__(aux),
+            "likelihood": self.likelihood.__initialize_params__(aux),
+            "mean": self.mean.__initialize_params__(aux),
+            "model": {},
+        }
+
+    def log_probability(self, params, X, y):
+        # kernel
+        covariance, log_kernel_prior = self.kernel(params, penalty=self.penalty)(X, X)
         noisy_covariance = self.add_noise(covariance, noise)
         chol = jnp.linalg.cholesky(noisy_covariance)
+
+        # likelihood
+        noise, log_likelihood_prior = self.likelihood(params, penalty=self.penalty)
+
+        # mean
+        mean = self.mean(params, aux={"y": y})
+
         y_bar = y - mean
         k_inv_y = jsp.linalg.cho_solve((chol, True), y_bar)
         log_likelihood = (
@@ -110,46 +62,38 @@ class ExactGP(AbstractGP):
             - jnp.log(chol.diagonal()).sum()
             - 0.5 * y.shape[0] * jnp.log(2 * jnp.pi)
         )
-        # print(
-        #     -(y_bar.ravel() * k_inv_y.ravel()).sum(),
-        #     -2 * jnp.log(chol.diagonal()).sum(),
-        #     -y.shape[0] * jnp.log(2 * jnp.pi),
-        # )
-        return log_likelihood + prior_log_prob
-
-    def log_prior(self, params):
-        log_prior = get_raw_log_prior(self.priors, params, self.constraints)
-        return ravel_pytree(log_prior)[0].sum()
+        log_prior = log_likelihood_prior + log_kernel_prior
+        return log_likelihood + log_prior
 
     def condition(self, params, X, y):
-        if self.mean.__class__.__name__ == "ZeroMean":
-            mean = y.mean()
-        else:
-            mean = self.mean(params)
-        kernel = self.kernel(params)
-        if self.kernel.__class__.__name__ == "HeinonenGibbsKernel":
-            covariance = self.kernel.train_cov(params)
-        else:
-            covariance = kernel(X, X)
-        if self.noise.__class__.__name__ == "HeinonenHeteroscedasticNoise":
-            noise = self.noise.train_noise(params)
-        else:
-            noise = self.noise(params, X)
+        """
+        This function is useful while doing batch prediction.
+        """
+
+        # kernel
+        kernel_fn = self.kernel(params)
+        train_cov = kernel_fn(X, X)
+
+        # likelihood
+        noise = self.likelihood(params)
+
+        # mean
+        mean = self.mean(params, aux={"y": y})
 
         y_bar = y - mean
-        noisy_covariance = self.add_noise(covariance, noise)
+        noisy_covariance = self.add_noise(train_cov, noise)
         L = jnp.linalg.cholesky(noisy_covariance)
         alpha = jsp.linalg.cho_solve((L, True), y_bar)
 
         def predict_fn(X_test, return_cov=True, include_noise=True):
-            K_star = kernel(X_test, X)
+            K_star = kernel_fn(X_test, X)
             pred_mean = K_star @ alpha + mean
 
             if return_cov:
                 v = jsp.linalg.cho_solve((L, True), K_star.T)
-                pred_cov = kernel(X_test, X_test) - (K_star @ v)
+                pred_cov = kernel_fn(X_test, X_test) - (K_star @ v)
                 if include_noise:
-                    pred_cov = self.add_noise(pred_cov, self.noise(params, X_test))
+                    pred_cov = add_noise(pred_cov, self.noise(params, X_test))
                 return pred_mean, pred_cov
             else:
                 return pred_mean
@@ -157,21 +101,16 @@ class ExactGP(AbstractGP):
         return predict_fn
 
     def predict(self, params, X, y, X_test, return_cov=True, include_noise=True):
+        """
+        This method is suitable for one time prediction.
+        In case of batch prediction, it is better to use `condition` method in combination with `predict`.
+        """
         predict_fn = self.condition(params, X, y)
         return predict_fn(X_test, return_cov=return_cov, include_noise=include_noise)
 
-    def __initialise_params__(self, key, X, X_inducing):
-        return {}  # No additional parameters to initialise.
 
-    def __get_bijectors__(self):
-        return {}  # No additional bijectors to return.
-
-    def __get_priors__(self):
-        return {}  # No additional priors to return.
-
-
-class SparseGP(AbstractGP):
-    def __init__(self, X_inducing, kernel=RBFKernel(), noise=HomoscedasticNoise(), mean=ScalarMean()):
+class SparseGPRegression(Model):
+    def __init__(self, X_inducing, kernel, noise, mean):
         super().__init__(kernel, noise, mean)
         self.X_inducing = X_inducing
 
@@ -286,7 +225,7 @@ class SparseGP(AbstractGP):
         else:
             return pred_mean
 
-    def __initialise_params__(self, key, X, X_inducing):
+    def __initialize_params__(self, key, X, X_inducing):
         if X_inducing is None:
             assert self.X_inducing is not None, "X_inducing must be specified."
             X_inducing = self.X_inducing
@@ -296,4 +235,4 @@ class SparseGP(AbstractGP):
         return {"X_inducing": Identity()}
 
     def __get_priors__(self):
-        return {"X_inducing": NoPrior()}
+        return {"X_inducing": None}

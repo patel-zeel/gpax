@@ -4,11 +4,10 @@ import jax.numpy as jnp
 import jax.tree_util as tree_util
 
 from jaxtyping import Array
-from gpax.gps import ExactGP
+from gpax.models import ExactGP
 from gpax.kernels import Kernel, RBFKernel
 from gpax.bijectors import Identity, Exp
-from gpax.distributions import NoPrior, Normal
-from gpax.noises import HomoscedasticNoise
+from gpax.likelihoodshoods import HomoscedasticNoise
 from gpax.means import ScalarMean, ZeroMean
 
 
@@ -27,8 +26,8 @@ class GibbsKernel(Kernel):
         std_latent_variance_prior=None,
         variance_scale_prior=None,
         variance_sigma_prior=None,
-        lengthscale_prior=Exp()(NoPrior()),
-        variance_prior=Exp()(NoPrior()),
+        lengthscale_prior=None,
+        variance_prior=None,
         train_latent_gp_noise=False,
         non_centered=True,
     ):
@@ -93,17 +92,14 @@ class GibbsKernel(Kernel):
                 l1 = predict_fn(x=x1)
                 l2 = predict_fn(x=x2)
                 l_avg_square = (l1**2 + l2**2) / 2.0
-                l_avg = jnp.sqrt(l_avg_square)
                 prefix_part = jnp.sqrt(l1 * l2 / l_avg_square).prod()
-                x1 = x1 / l_avg
-                x2 = x2 / l_avg
-            else:
-                lengthscale = params["kernel"]["lengthscale"]
-                x1 = x1 / lengthscale
-                x2 = x2 / lengthscale
-                prefix_part = 1.0
 
-            sqr_dist = ((x1 - x2) ** 2).sum()
+                lengthscale = jnp.sqrt(l_avg_square)
+            else:
+                prefix_part = 1.0
+                lengthscale = params["kernel"]["lengthscale"]
+
+            sqr_dist = ((x1 / lengthscale - x2 / lengthscale) ** 2).sum()
             if self.base_kernel == "rbf":
                 suffix_part = jnp.exp(-0.5 * sqr_dist)
             elif self.base_kernel == "matern12":
@@ -198,7 +194,7 @@ class GibbsKernel(Kernel):
                 )
             ).squeeze()
 
-    def __initialise_params__(self, key, X_inducing=None):
+    def __initialize_params__(self, key, X_inducing=None):
         params = {}
         priors = self.__get_priors__()
         key, subkey = jax.random.split(key, 2)
@@ -210,7 +206,7 @@ class GibbsKernel(Kernel):
                 assert X_inducing is not None, "X_inducing must not be None if self.X_inducing is None"
 
             def initialize_per_dim(key, x_inducing):
-                params = self.scale_gp.initialise_params(key, x_inducing.reshape(-1, 1))
+                params = self.scale_gp.initialize_params(key, x_inducing.reshape(-1, 1))
                 if self.train_latent_gp_noise is False:
                     params["noise"]["variance"] = jnp.array(0.0)
                 return params
@@ -226,7 +222,7 @@ class GibbsKernel(Kernel):
             if self.X_inducing is not None:
                 X_inducing = self.X_inducing
                 params["X_inducing"] = X_inducing
-            params["variance_gp"] = self.variance_gp.initialise_params(keys[0], X_inducing)
+            params["variance_gp"] = self.variance_gp.initialize_params(keys[0], X_inducing)
 
             if self.train_latent_gp_noise is False:
                 params["variance_gp"]["noise"]["variance"] = jnp.array(0.0)
@@ -260,14 +256,14 @@ class GibbsKernel(Kernel):
         priors = {}
         if self.flex_scale:
             if self.X_inducing is not None:
-                priors["X_inducing"] = NoPrior()  # Dummy prior, never used for sampling
+                priors["X_inducing"] = None  # Dummy prior, never used for sampling
             priors["scale_gp"] = self.scale_gp.get_priors()
             priors["std_latent_scale"] = self.std_latent_scale_prior
         else:
             priors["lengthscale"] = self.lengthscale_prior
         if self.flex_variance:
             if self.X_inducing is not None:
-                priors["X_inducing"] = NoPrior()  # Dummy prior, never used for sampling
+                priors["X_inducing"] = None  # Dummy prior, never used for sampling
             priors["variance_gp"] = self.variance_gp.get_priors()
             priors["std_latent_variance"] = self.std_latent_variance_prior
         else:
@@ -284,8 +280,8 @@ class HeinonenGibbsKernel(Kernel):
         ARD=True,
         std_latent_scale_prior=None,
         std_latent_variance_prior=None,
-        lengthscale_prior=Exp()(NoPrior()),
-        variance_prior=Exp()(NoPrior()),
+        lengthscale_prior=None,
+        variance_prior=None,
         train_latent_gp_noise=False,
         scale_gp_lengthscale=0.1,
         scale_gp_variance=1.0,
@@ -306,7 +302,7 @@ class HeinonenGibbsKernel(Kernel):
                 noise=HomoscedasticNoise(variance=scale_gp_noise),
                 mean=ZeroMean(),
             )
-            self.scale_gp_params = self.scale_gp.initialise_params(jax.random.PRNGKey(0), jnp.array([[0.0]]))
+            self.scale_gp_params = self.scale_gp.initialize_params(jax.random.PRNGKey(0), jnp.array([[0.0]]))
         else:
             self.lengthscale_prior = lengthscale_prior
 
@@ -317,7 +313,7 @@ class HeinonenGibbsKernel(Kernel):
                 noise=HomoscedasticNoise(variance=variance_gp_noise),
                 mean=ZeroMean(),
             )
-            self.variance_gp_params = self.variance_gp.initialise_params(jax.random.PRNGKey(0), jnp.array([[0.0]]))
+            self.variance_gp_params = self.variance_gp.initialize_params(jax.random.PRNGKey(0), jnp.array([[0.0]]))
         else:
             self.variance_prior = variance_prior
 
@@ -434,7 +430,7 @@ class HeinonenGibbsKernel(Kernel):
 
         return jnp.exp(pred_log_variance_std)
 
-    def __initialise_params__(self, key, X_inducing=None):
+    def __initialize_params__(self, key, X_inducing=None):
         params = {}
         priors = self.__get_priors__()
         key, subkey = jax.random.split(key, 2)

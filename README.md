@@ -11,13 +11,13 @@ Define `jnp.jitter=<reasonable value>` in the beginning of your code, it is used
 - `noise`: the noise to use (default: `HomoskedasticNoise`)
 - `mean`: the mean to use (default: `ScalarMean`)
 
-2. `initialise_params(key, X, X_inducing)` method initialises the parameters of the model. `X` is passed to infer the dimensionality of X for kernel e.g. if `X` is (5, 3) and ARD is true, kernel lengthscale will be initialized of shape (3,). `X_inducing` is optional argument and it is only used when using `GibbsKernel` and/or `HeteroScedasticNoise`.
+2. `initialize_params(key, X, X_inducing)` method initializes the parameters of the model. `X` is passed to infer the dimensionality of X for kernel e.g. if `X` is (5, 3) and ARD is true, kernel lengthscale will be initialized of shape (3,). `X_inducing` is optional argument and it is only used when using `GibbsKernel` and/or `HeteroScedasticNoise`.
 
 ### SparseGP (WIP)
 1. It is a sparse GP regression class. It takes all the arguments of `ExactGP` and the following additional arguments:
 - `method` - the sparse gp method to be used (default: `vfe`, other options: `dtc`, `fitc`)
 
-2. `initialise_params(key, X, X_inducing)` method initialises the parameters of the model. `X_inducing` is a mandatory argument and it is used to initialize the inducing points.
+2. `initialize_params(key, X, X_inducing)` method initializes the parameters of the model. `X_inducing` is a mandatory argument and it is used to initialize the inducing points.
 
 ## Kernels
 
@@ -25,7 +25,7 @@ Define `jnp.jitter=<reasonable value>` in the beginning of your code, it is used
 
 2. All of them accept their parameter at initialization time or they will initialize parameters to random values based on priors and PRNG key.
 
-3. `initialise_params(key, X, X_inducing)` method initialises the parameters of the kernel. In some cases, `X` is needed and in other `X_inducing` but sometimes both might also be needed. In detail
+3. `initialize_params(key, X, X_inducing)` method initializes the parameters of the kernel. In some cases, `X` is needed and in other `X_inducing` but sometimes both might also be needed. In detail
 - `X` is needed when initializing all kernels except `GibbsKernel`
 - `X_inducing` is needed when initializing `GibbsKernel`
 - Both `X` and `X_inducing` are needed when initializing a `SumKernel` or `ProductKernel` because they may contain `GibbsKernel` as one of their components.
@@ -92,7 +92,7 @@ noise = HeteroscedasticNoise()
 kernel = GibbsKernel()
 noise = HeteroscedasticNoise(use_kernel_inducing=False)
 gp = SparseGP(kernel=kernel, noise=noise)
-params = gp.initialise_params(key, X=X, X_inducing=X_inducing)
+params = gp.initialize_params(key, X=X, X_inducing=X_inducing)
 ```
 
 ### If your model is SparseGP and you want to learn `X_inducing` separately for `SparseGP` and jointly for `GibbsKernel` and `HeteroscedasticNoise`.
@@ -100,5 +100,5 @@ params = gp.initialise_params(key, X=X, X_inducing=X_inducing)
 kernel = GibbsKernel(X_inducing=X_inducing)
 noise = HeteroscedasticNoise(use_kernel_inducing=True)
 gp = SparseGP(kernel=kernel, noise=noise)
-params = gp.initialise_params(key, X=X, X_inducing=X_inducing)
+params = gp.initialize_params(key, X=X, X_inducing=X_inducing)
 ```
