@@ -6,9 +6,7 @@ from jax.flatten_util import ravel_pytree
 from gpax.utils import constrain, unconstrain
 
 from gpax.core import Base, get_default_jitter
-from gpax.utils import add_noise
-
-JITTER = get_default_jitter()
+from gpax.utils import add_to_diagonal, get_a_inv_b
 
 
 class Model(Base):
@@ -25,6 +23,12 @@ class ExactGPRegression(Model):
         self.likelihood = likelihood
         self.mean = mean
 
+    def __initialize_params__(self, aux):
+        params = {
+            "kernel": self.kernel.__initialize_params__(aux),
+            "likelihood": self.likelihood.__initialize_params__(aux),
+            "mean": self.mean.__initialize_params__(aux),
+        }
         # constraints
         self.constraints = {
             "kernel": self.kernel.constraints,
@@ -33,37 +37,55 @@ class ExactGPRegression(Model):
         }
 
         # priors
-        self.priors = {"kernel": self.kernel.priors, "likelihood": self.likelihood.priors, "mean": self.mean.priors}
+        self.priors = {
+            "kernel": self.kernel.priors,
+            "likelihood": self.likelihood.priors,
+            "mean": self.mean.priors,
+        }
+        return params
 
-    def __initialize_params__(self, aux):
+    def __post_initialize_params__(self, params, aux):
         return {
-            "kernel": self.kernel.__initialize_params__(aux),
-            "likelihood": self.likelihood.__initialize_params__(aux),
-            "mean": self.mean.__initialize_params__(aux),
-            "model": {},
+            "kernel": self.kernel.__post_initialize_params__(params["kernel"], aux),
+            "likelihood": self.likelihood.__post_initialize_params__(params["likelihood"], aux),
+            "mean": self.mean.__post_initialize_params__(params["mean"], aux),
         }
 
-    def log_probability(self, params, X, y):
+    def log_probability(self, params, X, y, prior_type=None):
+        """
+        prior_type: default: None, possible values: "prior", "posterior", None
+        """
         # kernel
-        covariance, log_kernel_prior = self.kernel(params, penalty=self.penalty)(X, X)
-        noisy_covariance = self.add_noise(covariance, noise)
-        chol = jnp.linalg.cholesky(noisy_covariance)
+        if prior_type is None:
+            covariance = self.kernel(params["kernel"])(X, X)
+        else:
+            covariance, log_kernel_prior = self.kernel(params["kernel"], prior_type=prior_type)(X, X)
 
         # likelihood
-        noise, log_likelihood_prior = self.likelihood(params, penalty=self.penalty)
+        if prior_type is None:
+            likelihood_variance = self.likelihood(params["likelihood"])
+        else:
+            likelihood_variance, log_likelihood_prior = self.likelihood(params["likelihood"], prior_type=prior_type)
 
         # mean
-        mean = self.mean(params, aux={"y": y})
+        mean = self.mean(params["mean"], aux={"y": y})
 
         y_bar = y - mean
-        k_inv_y = jsp.linalg.cho_solve((chol, True), y_bar)
+        noisy_covariance = add_to_diagonal(covariance, likelihood_variance, get_default_jitter())
+
+        k_inv_y, k_cholesky = get_a_inv_b(noisy_covariance, y_bar, return_cholesky=True)
+
         log_likelihood = (
             -0.5 * (y_bar.ravel() * k_inv_y.ravel()).sum()  # This will break for multi-dimensional y
-            - jnp.log(chol.diagonal()).sum()
+            - jnp.log(k_cholesky.diagonal()).sum()
             - 0.5 * y.shape[0] * jnp.log(2 * jnp.pi)
         )
-        log_prior = log_likelihood_prior + log_kernel_prior
-        return log_likelihood + log_prior
+
+        if prior_type is None:
+            return log_likelihood
+        else:
+            log_prior = log_likelihood_prior + log_kernel_prior
+            return log_likelihood + log_prior
 
     def condition(self, params, X, y):
         """
@@ -82,18 +104,17 @@ class ExactGPRegression(Model):
 
         y_bar = y - mean
         noisy_covariance = self.add_noise(train_cov, noise)
-        L = jnp.linalg.cholesky(noisy_covariance)
-        alpha = jsp.linalg.cho_solve((L, True), y_bar)
+        k_inv_y, k_cholesky = self.get_a_inv_b(noisy_covariance, y_bar, return_cholesky=True)
 
         def predict_fn(X_test, return_cov=True, include_noise=True):
             K_star = kernel_fn(X_test, X)
-            pred_mean = K_star @ alpha + mean
+            pred_mean = K_star @ k_inv_y + mean
 
             if return_cov:
-                v = jsp.linalg.cho_solve((L, True), K_star.T)
-                pred_cov = kernel_fn(X_test, X_test) - (K_star @ v)
+                k_inv_k_star = jsp.linalg.cho_solve((k_cholesky, True), K_star.T)
+                pred_cov = kernel_fn(X_test, X_test) - (K_star @ k_inv_k_star)
                 if include_noise:
-                    pred_cov = add_noise(pred_cov, self.noise(params, X_test))
+                    pred_cov = add_to_diagonal(pred_cov, self.noise(params, X_test), get_default_jitter())
                 return pred_mean, pred_cov
             else:
                 return pred_mean
@@ -109,130 +130,130 @@ class ExactGPRegression(Model):
         return predict_fn(X_test, return_cov=return_cov, include_noise=include_noise)
 
 
-class SparseGPRegression(Model):
-    def __init__(self, X_inducing, kernel, noise, mean):
-        super().__init__(kernel, noise, mean)
-        self.X_inducing = X_inducing
+# class SparseGPRegression(Model):
+#     def __init__(self, X_inducing, kernel, noise, mean):
+#         super().__init__(kernel, noise, mean)
+#         self.X_inducing = X_inducing
 
-    def log_probability(self, params, X, y, include_prior=True):
-        X_inducing = params["X_inducing"]
-        kernel_fn = self.kernel(params)
-        prior_log_prob = 0.0
-        if self.noise.__class__.__name__ == "HeinonenHeteroscedasticNoise":
-            if include_prior:
-                _, tmp_prior_log_prob = self.noise.train_noise(params, return_prior_log_prob=True)
-                prior_log_prob += tmp_prior_log_prob
+#     def log_probability(self, params, X, y, include_prior=True):
+#         X_inducing = params["X_inducing"]
+#         kernel_fn = self.kernel(params)
+#         prior_log_prob = 0.0
+#         if self.noise.__class__.__name__ == "HeinonenHeteroscedasticNoise":
+#             if include_prior:
+#                 _, tmp_prior_log_prob = self.noise.train_noise(params, return_prior_log_prob=True)
+#                 prior_log_prob += tmp_prior_log_prob
 
-        if self.mean.__class__.__name__ == "ZeroMean":
-            mean = y.mean()
-        else:
-            mean = self.mean(params)
+#         if self.mean.__class__.__name__ == "ZeroMean":
+#             mean = y.mean()
+#         else:
+#             mean = self.mean(params)
 
-        if self.kernel.__class__.__name__ == "HeinonenGibbsKernel":
-            if include_prior:
-                k_mm, tmp_prior_log_prob = self.kernel.train_cov(params, return_prior_log_prob=True)
-                prior_log_prob += tmp_prior_log_prob
-            else:
-                k_mm = self.kernel.train_cov(params, return_prior_log_prob=False)
-        else:
-            k_mm = kernel_fn(X_inducing, X_inducing)
+#         if self.kernel.__class__.__name__ == "HeinonenGibbsKernel":
+#             if include_prior:
+#                 k_mm, tmp_prior_log_prob = self.kernel.train_cov(params, return_prior_log_prob=True)
+#                 prior_log_prob += tmp_prior_log_prob
+#             else:
+#                 k_mm = self.kernel.train_cov(params, return_prior_log_prob=False)
+#         else:
+#             k_mm = kernel_fn(X_inducing, X_inducing)
 
-        y_bar = y - mean
-        noise_n = self.noise(params, X).squeeze()
-        k_mm = k_mm + jnp.eye(X_inducing.shape[0]) * jnp.jitter
-        k_nm = kernel_fn(X, X_inducing)
+#         y_bar = y - mean
+#         noise_n = self.noise(params, X).squeeze()
+#         k_mm = k_mm + jnp.eye(X_inducing.shape[0]) * jnp.jitter
+#         k_nm = kernel_fn(X, X_inducing)
 
-        # woodbury identity
-        left = k_nm / noise_n.reshape(-1, 1)
-        right = left.T
-        middle = k_mm + right @ k_nm
-        k_inv = jnp.diag(1 / noise_n.squeeze()) - left @ jsp.linalg.cho_solve(
-            (jnp.linalg.cholesky(middle), True), right
-        )
-        data_fit = y_bar.reshape(1, -1) @ k_inv @ y_bar.reshape(-1, 1)
+#         # woodbury identity
+#         left = k_nm / noise_n.reshape(-1, 1)
+#         right = left.T
+#         middle = k_mm + right @ k_nm
+#         k_inv = jnp.diag(1 / noise_n.squeeze()) - left @ jsp.linalg.cho_solve(
+#             (jnp.linalg.cholesky(middle), True), right
+#         )
+#         data_fit = y_bar.reshape(1, -1) @ k_inv @ y_bar.reshape(-1, 1)
 
-        # matrix determinant lemma
-        # https://en.wikipedia.org/wiki/Matrix_determinant_lemma
-        chol_m = jnp.linalg.cholesky(k_mm)
-        right = jsp.linalg.solve_triangular(chol_m, k_nm.T, lower=True)  # m x n
-        term = (right / noise_n.reshape(1, -1)) @ right.T + jnp.eye(X_inducing.shape[0])
-        log_det_term = jnp.log(jnp.linalg.cholesky(term).diagonal()).sum() * 2
-        log_det_noise = jnp.log(noise_n).sum()
-        complexity_penalty = log_det_term + log_det_noise
+#         # matrix determinant lemma
+#         # https://en.wikipedia.org/wiki/Matrix_determinant_lemma
+#         chol_m = jnp.linalg.cholesky(k_mm)
+#         right = jsp.linalg.solve_triangular(chol_m, k_nm.T, lower=True)  # m x n
+#         term = (right / noise_n.reshape(1, -1)) @ right.T + jnp.eye(X_inducing.shape[0])
+#         log_det_term = jnp.log(jnp.linalg.cholesky(term).diagonal()).sum() * 2
+#         log_det_noise = jnp.log(noise_n).sum()
+#         complexity_penalty = log_det_term + log_det_noise
 
-        # trace
-        k_diag = (jax.vmap(lambda x: kernel_fn(x.reshape(1, -1), x.reshape(1, -1)))(X)).reshape(-1)
-        q_diag = jnp.square(right).sum(axis=0)
-        trace_term = ((k_diag - q_diag) / noise_n).sum()
+#         # trace
+#         k_diag = (jax.vmap(lambda x: kernel_fn(x.reshape(1, -1), x.reshape(1, -1)))(X)).reshape(-1)
+#         q_diag = jnp.square(right).sum(axis=0)
+#         trace_term = ((k_diag - q_diag) / noise_n).sum()
 
-        # print(
-        #     "data fit",
-        #     data_fit,
-        #     "complexity penalty",
-        #     complexity_penalty + X.shape[0] * jnp.log(2 * jnp.pi),
-        #     "trace term",
-        #     trace_term,
-        # )
-        log_prob = -(0.5 * (data_fit + complexity_penalty + trace_term + X.shape[0] * jnp.log(2 * jnp.pi))).squeeze()
-        if include_prior:
-            return log_prob + prior_log_prob
-        else:
-            return log_prob
+#         # print(
+#         #     "data fit",
+#         #     data_fit,
+#         #     "complexity penalty",
+#         #     complexity_penalty + X.shape[0] * jnp.log(2 * jnp.pi),
+#         #     "trace term",
+#         #     trace_term,
+#         # )
+#         log_prob = -(0.5 * (data_fit + complexity_penalty + trace_term + X.shape[0] * jnp.log(2 * jnp.pi))).squeeze()
+#         if include_prior:
+#             return log_prob + prior_log_prob
+#         else:
+#             return log_prob
 
-    def predict(self, params, X, y, X_test, return_cov=True, include_noise=True):
-        X_inducing = params["X_inducing"]
-        kernel_fn = self.kernel(params)
+#     def predict(self, params, X, y, X_test, return_cov=True, include_noise=True):
+#         X_inducing = params["X_inducing"]
+#         kernel_fn = self.kernel(params)
 
-        if self.mean.__class__.__name__ == "ZeroMean":
-            mean = y.mean()
-        else:
-            mean = self.mean(params)
+#         if self.mean.__class__.__name__ == "ZeroMean":
+#             mean = y.mean()
+#         else:
+#             mean = self.mean(params)
 
-        if self.kernel.__class__.__name__ == "HeinonenGibbsKernel":
-            k_mm = self.kernel.train_cov(params, return_prior_log_prob=False)
-        else:
-            k_mm = kernel_fn(X_inducing, X_inducing)
+#         if self.kernel.__class__.__name__ == "HeinonenGibbsKernel":
+#             k_mm = self.kernel.train_cov(params, return_prior_log_prob=False)
+#         else:
+#             k_mm = kernel_fn(X_inducing, X_inducing)
 
-        y_bar = y - mean
-        k_mm = k_mm + jnp.eye(X_inducing.shape[0]) * jnp.jitter
-        chol_m = jnp.linalg.cholesky(k_mm)
-        k_nm = kernel_fn(X, X_inducing)
-        noise_n = self.noise(params, X).squeeze()
+#         y_bar = y - mean
+#         k_mm = k_mm + jnp.eye(X_inducing.shape[0]) * jnp.jitter
+#         chol_m = jnp.linalg.cholesky(k_mm)
+#         k_nm = kernel_fn(X, X_inducing)
+#         noise_n = self.noise(params, X).squeeze()
 
-        chol_m_inv_mn = jsp.linalg.solve_triangular(chol_m, k_nm.T, lower=True)  # m x n
+#         chol_m_inv_mn = jsp.linalg.solve_triangular(chol_m, k_nm.T, lower=True)  # m x n
 
-        chol_m_inv_mn_by_noise = chol_m_inv_mn / noise_n.reshape(1, -1)
-        A = chol_m_inv_mn_by_noise @ chol_m_inv_mn.T + jnp.eye(X_inducing.shape[0])
-        prod_y_bar = chol_m_inv_mn_by_noise @ y_bar
-        chol_A = jnp.linalg.cholesky(A)
-        post_mean = chol_m @ jsp.linalg.cho_solve((chol_A, True), prod_y_bar)
+#         chol_m_inv_mn_by_noise = chol_m_inv_mn / noise_n.reshape(1, -1)
+#         A = chol_m_inv_mn_by_noise @ chol_m_inv_mn.T + jnp.eye(X_inducing.shape[0])
+#         prod_y_bar = chol_m_inv_mn_by_noise @ y_bar
+#         chol_A = jnp.linalg.cholesky(A)
+#         post_mean = chol_m @ jsp.linalg.cho_solve((chol_A, True), prod_y_bar)
 
-        k_new_m = kernel_fn(X_test, X_inducing)
-        K_inv_y = jsp.linalg.cho_solve((chol_m, True), post_mean)
-        pred_mean = k_new_m @ K_inv_y + mean
-        if return_cov:
-            k_new_new = kernel_fn(X_test, X_test)
-            k_inv_new = jsp.linalg.cho_solve((chol_m, True), k_new_m.T)
-            posterior_cov = k_new_new - k_new_m @ k_inv_new
+#         k_new_m = kernel_fn(X_test, X_inducing)
+#         K_inv_y = jsp.linalg.cho_solve((chol_m, True), post_mean)
+#         pred_mean = k_new_m @ K_inv_y + mean
+#         if return_cov:
+#             k_new_new = kernel_fn(X_test, X_test)
+#             k_inv_new = jsp.linalg.cho_solve((chol_m, True), k_new_m.T)
+#             posterior_cov = k_new_new - k_new_m @ k_inv_new
 
-            chol_A_ = jnp.linalg.cholesky(chol_m @ A @ chol_m.T)
-            subspace_cov = k_new_m @ jsp.linalg.cho_solve((chol_A_, True), k_new_m.T)
+#             chol_A_ = jnp.linalg.cholesky(chol_m @ A @ chol_m.T)
+#             subspace_cov = k_new_m @ jsp.linalg.cho_solve((chol_A_, True), k_new_m.T)
 
-            pred_cov = posterior_cov + subspace_cov
-            if include_noise:
-                pred_cov = self.add_noise(pred_cov, self.noise(params, X_test))
-            return pred_mean, pred_cov
-        else:
-            return pred_mean
+#             pred_cov = posterior_cov + subspace_cov
+#             if include_noise:
+#                 pred_cov = self.add_noise(pred_cov, self.noise(params, X_test))
+#             return pred_mean, pred_cov
+#         else:
+#             return pred_mean
 
-    def __initialize_params__(self, key, X, X_inducing):
-        if X_inducing is None:
-            assert self.X_inducing is not None, "X_inducing must be specified."
-            X_inducing = self.X_inducing
-        return {"X_inducing": X_inducing}
+#     def __initialize_params__(self, key, X, X_inducing):
+#         if X_inducing is None:
+#             assert self.X_inducing is not None, "X_inducing must be specified."
+#             X_inducing = self.X_inducing
+#         return {"X_inducing": X_inducing}
 
-    def __get_bijectors__(self):
-        return {"X_inducing": Identity()}
+#     def __get_bijectors__(self):
+#         return {"X_inducing": Identity()}
 
-    def __get_priors__(self):
-        return {"X_inducing": None}
+#     def __get_priors__(self):
+#         return {"X_inducing": None}

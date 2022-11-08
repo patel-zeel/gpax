@@ -85,9 +85,18 @@ class Identity(Bijector):
 
 
 @jax.tree_util.register_pytree_node_class
-class Softplus(Bijector):
+class SquarePlus(Bijector):
     def __init__(self):
-        self.forward_fn = jax.nn.softplus
-        self.inverse_fn = lambda x: jnp.log(jnp.exp(x) - 1.0)
+        self.forward_fn = lambda x: jax.lax.mul(0.5, jax.lax.add(x, jax.lax.sqrt(jax.lax.add(jax.lax.square(x), 4.0))))
+        self.inverse_fn = lambda x: x - 1 / x
+        self.upper = jnp.inf
+        self.lower = 0.0
+
+
+@jax.tree_util.register_pytree_node_class
+class SoftPlus(Bijector):
+    def __init__(self):
+        self.forward_fn = lambda x: jnp.log(1 + jnp.exp(x))
+        self.inverse_fn = lambda x: jnp.log(jnp.exp(x) - 1)
         self.upper = jnp.inf
         self.lower = 0.0

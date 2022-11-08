@@ -89,7 +89,6 @@ class Exponential(Distribution):
 
 class Frechet(Distribution):
     def __init__(self, rate, dim):
-
         self.rate = rate
         self.dim = dim
 

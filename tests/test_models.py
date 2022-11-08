@@ -7,9 +7,9 @@ import pytest
 import jax
 import jax.numpy as jnp
 from gpax.models import ExactGPRegression
-from gpax.kernels import RBFKernel
-from gpax.likelihoods import GaussianLikelihood
-from gpax.means import ScalarMean
+from gpax.kernels import RBF
+from gpax.likelihoods import Gaussian
+from gpax.means import Scalar
 
 # from gpax.special_kernels import GibbsKernel
 from stheno.jax import EQ, GP, OneMean, PseudoObs
@@ -31,19 +31,19 @@ def stheno_log_prob(params):
         params["mean"]["value"] * OneMean(),
         params["kernel"]["variance"] * EQ().stretch(params["kernel"]["lengthscale"]),
     )
-    return stheno_gp(X, params["noise"]["variance"]).logpdf(y)
+    return stheno_gp(X, params["likelihood"]["variance"]).logpdf(y)
 
 
 @pytest.mark.parametrize("key", keys)
 @pytest.mark.parametrize(
     "kernel",
     [
-        RBFKernel(),
+        RBF(),
         # GibbsKernel(flex_scale=False, flex_variance=False),
     ],
 )
 def test_exact_gp(key, kernel):
-    gp = ExactGPRegression(kernel=kernel, likelihood=GaussianLikelihood(), mean=ScalarMean())
+    gp = ExactGPRegression(kernel=kernel, likelihood=Gaussian(), mean=Scalar())
     params = gp.initialize_params(key, aux={"X": X})
     log_prob = gp.log_probability(params, X, y)
 

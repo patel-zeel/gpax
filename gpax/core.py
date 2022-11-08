@@ -19,9 +19,15 @@ class Base:
         init_params = self.__initialize_params__(aux)
         init_params = jtu.tree_map(lambda x: jnp.asarray(x), init_params)
         if key is None:
-            return init_params
+            params = init_params
         else:
-            return sample_params(init_params, self.priors, self.constraints, key)
+            params = sample_params(init_params, self.priors, self.constraints, key)
+
+        params = self.__post_initialize_params__(params, aux)
+        return params
+
+    def __post_initialize_params__(self, params, aux):
+        return params
 
     def __initialize_params__(self, aux):
         raise NotImplementedError("This method must be implemented by a subclass.")
@@ -38,7 +44,12 @@ def sample_params(params, priors, bijectors, key, generic_sampler=jax.random.nor
             return prior.sample(seed=seed)
 
     return jtu.tree_map(
-        lambda param, prior, bijector, seed: _randomize(param, prior, bijector, seed), params, priors, bijectors, seeds
+        lambda prior, param, bijector, seed: _randomize(param, prior, bijector, seed),
+        priors,
+        params,
+        bijectors,
+        seeds,
+        is_leaf=lambda x: x is None,
     )
 
 

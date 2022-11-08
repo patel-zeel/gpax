@@ -6,30 +6,27 @@ class Mean(Base):
     pass
 
 
-class ScalarMean(Mean):
+class Scalar(Mean):
     def __init__(self, value=0.0, value_prior=None):
         self.value = value
-
-        self.constraints = {"value": get_default_bijector()}
-        self.priors = {"value": value_prior}
+        self.value_prior = value_prior
 
     def __call__(self, params, aux=None):
         return params["value"]
 
-    def __initialize_params__(self, aux):
-        return {"value": self.value}
+    def __initialize_params__(self, aux=None):
+        params = {"value": self.value}
+        self.constraints = {"value": get_default_bijector()}
+        self.priors = {"value": self.value_prior}
+        return params
 
-    def __get_priors__(self):
-        return
 
-
-class ZeroMean(Mean):
-    def __init__(self):
-        self.constraints = {}
-        self.priors = {}
-
-    def __call__(self, params, aux):
+class Zero(Mean):
+    def __call__(self, params, aux=None):
         return aux["y"].mean()
 
-    def __initialize_params__(self, aux):
-        return {}
+    def __initialize_params__(self, aux=None):
+        params = {}
+        self.constraints = {}
+        self.priors = {}
+        return params

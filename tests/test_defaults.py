@@ -21,14 +21,14 @@ def test_default_prior():
 
 def test_default_bijector():
     assert isinstance(get_default_bijector(), gb.Identity)
-    set_default_bijector(gb.Softplus)
-    assert isinstance(get_default_bijector(), gb.Softplus)
+    set_default_bijector(gb.SoftPlus)
+    assert isinstance(get_default_bijector(), gb.SoftPlus)
 
 
 def test_positive_bijector():
     assert isinstance(get_positive_bijector(), gb.Exp)
-    set_positive_bijector(gb.Softplus)
-    assert isinstance(get_positive_bijector(), gb.Softplus)
+    set_positive_bijector(gb.SoftPlus)
+    assert isinstance(get_positive_bijector(), gb.SoftPlus)
 
 
 def test_default_jitter():

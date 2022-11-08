@@ -26,18 +26,21 @@ class Kernel(Base):
             else:
                 raise ValueError("aux must contain X or X_inducing")
 
-    def __call__(self, params, penalty=None):
-        kernel_fn = self.call(params, penalty)
-        return self.select(kernel_fn)
+    def __call__(self, params, prior_type=None, aux=None):
+        kernel_fn = self.call(params, prior_type, aux)
+        if isinstance(self, MathOperation):
+            return kernel_fn
+        else:
+            return self.select(kernel_fn)
 
     def __add__(self, other):
-        return SumKernel(k1=self, k2=other)
+        return Sum(k1=self, k2=other)
 
     def __mul__(self, other):
-        return ProductKernel(k1=self, k2=other)
+        return Product(k1=self, k2=other)
 
 
-class SmoothKernel(Kernel):
+class Smooth(Kernel):
     def __init__(
         self,
         active_dims=None,
@@ -51,19 +54,20 @@ class SmoothKernel(Kernel):
         self.ARD = ARD
         self.lengthscale = lengthscale
         self.variance = variance
+        self.lengthscale_prior = lengthscale_prior
+        self.variance_prior = variance_prior
 
-        self.constraints = {"lengthscale": get_positive_bijector(), "variance": get_positive_bijector()}
-        self.priors = {"lengthscale": lengthscale_prior, "variance": variance_prior}
-
-    def call(self, params, penalty=None):
-        kernel_fn = self.get_kernel_fn(params)
+    def call(self, params, prior_type=None, aux=None):
+        kernel_fn = self.get_kernel_fn(params, aux)
         kernel_fn = jax.vmap(kernel_fn, in_axes=(None, 0))
         kernel_fn = jax.vmap(kernel_fn, in_axes=(0, None))
 
-        if penalty is None:
+        if prior_type is None:
             return kernel_fn
         else:
-            return lambda X1, X2: kernel_fn(X1, X2), jnp.zeros(())
+            # For Smooth kernels, prior is not applicable within kernel, so return zero.
+            log_prior = jnp.zeros(())
+            return lambda X1, X2: kernel_fn(X1, X2), log_prior
 
     def log_prior(self, params):
         return get_raw_log_prior(params, self.constraints, self.priors)
@@ -92,11 +96,14 @@ class SmoothKernel(Kernel):
         else:
             raise ValueError("variance must be a scalar.")
 
+        self.constraints = {"lengthscale": get_positive_bijector(), "variance": get_positive_bijector()}
+        self.priors = {"lengthscale": self.lengthscale_prior, "variance": self.variance_prior}
+
         return params
 
 
-class RBFKernel(SmoothKernel):
-    def get_kernel_fn(self, params):
+class RBF(Smooth):
+    def get_kernel_fn(self, params, aux):
         def _kernel_fn(X1, X2):
             X1 = X1 / params["lengthscale"]
             X2 = X2 / params["lengthscale"]
@@ -109,12 +116,12 @@ class RBFKernel(SmoothKernel):
         return "RBF"
 
 
-ExpSquaredKernel = RBFKernel
-SquaredExpKernel = RBFKernel
+ExpSquared = RBF
+SquaredExp = RBF
 
 
-class Matern12Kernel(SmoothKernel):
-    def get_kernel_fn(self, params):
+class Matern12(Smooth):
+    def get_kernel_fn(self, params, aux):
         def _kernel_fn(X1, X2):
             X1 = X1 / params["lengthscale"]
             X2 = X2 / params["lengthscale"]
@@ -127,8 +134,8 @@ class Matern12Kernel(SmoothKernel):
         return "Matern12"
 
 
-class Matern32Kernel(SmoothKernel):
-    def get_kernel_fn(self, params):
+class Matern32(Smooth):
+    def get_kernel_fn(self, params, aux):
         def _kernel_fn(X1, X2):
             X1 = X1 / params["lengthscale"]
             X2 = X2 / params["lengthscale"]
@@ -142,8 +149,8 @@ class Matern32Kernel(SmoothKernel):
         return "Matern32"
 
 
-class Matern52Kernel(SmoothKernel):
-    def get_kernel_fn(self, params):
+class Matern52(Smooth):
+    def get_kernel_fn(self, params, aux):
         def _kernel_fn(X1, X2):
             X1 = X1 / params["lengthscale"]
             X2 = X2 / params["lengthscale"]
@@ -157,7 +164,7 @@ class Matern52Kernel(SmoothKernel):
         return "Matern52"
 
 
-class PolynomialKernel(SmoothKernel):
+class Polynomial(Smooth):
     def __init__(
         self,
         active_dims=None,
@@ -171,7 +178,7 @@ class PolynomialKernel(SmoothKernel):
         super().__init__(active_dims, ARD, lengthscale, variance, lengthscale_prior, variance_prior)
         self.order = order
 
-    def get_kernel_fn(self, params):
+    def get_kernel_fn(self, params, aux):
         def _kernel_fn(X1, X2):
             X1 = X1 / params["lengthscale"]
             X2 = X2 / params["lengthscale"]
@@ -183,47 +190,48 @@ class PolynomialKernel(SmoothKernel):
         return "Polynomial"
 
 
-class MathOperationKernel(Kernel):
+class MathOperation(Kernel):
     def __init__(self, k1, k2):
         self.k1 = k1
         self.k2 = k2
 
-        self.constraints = {"k1": self.k1.constraints, "k2": self.k2.constraints}
-        self.priors = {"k1": self.k1.priors, "k2": self.k2.priors}
-
-    def call(self, params, penalty=None):
+    def call(self, params, prior_type=None, aux=None):
         def kernel_fn(X1, X2):
-            k1 = self.k1.call(params["k1"], penalty)
-            k2 = self.k2.call(params["k2"], penalty)
-            if penalty is None:
+            k1 = self.k1.call(params["k1"], prior_type, aux)
+            k2 = self.k2.call(params["k2"], prior_type, aux)
+            if prior_type is None:
                 cov1 = k1(X1, X2)
                 cov2 = k2(X1, X2)
                 return self.operation(cov1, cov2)
             else:
-                cov1, penalty1 = k1(X1, X2)
-                cov2, penalty2 = k2(X1, X2)
-                return self.operation(cov1, cov2), penalty1 + penalty2
+                cov1, prior1 = k1(X1, X2)
+                cov2, prior2 = k2(X1, X2)
+                return self.operation(cov1, cov2), prior1 + prior2
 
         return kernel_fn
 
     def __initialize_params__(self, aux):
-        return {
+        params = {
             "k1": self.k1.__initialize_params__(aux),
             "k2": self.k2.__initialize_params__(aux),
         }
+        self.constraints = {"k1": self.k1.constraints, "k2": self.k2.constraints}
+        self.priors = {"k1": self.k1.priors, "k2": self.k2.priors}
+
+        return params
 
     def __repr__(self) -> str:
         return f"({self.k1} {self.symbol} {self.k2})"
 
 
-class ProductKernel(MathOperationKernel):
+class Product(MathOperation):
     def __init__(self, k1, k2):
         super().__init__(k1, k2)
         self.operation = lambda k1, k2: k1 * k2
         self.symbol = "x"
 
 
-class SumKernel(MathOperationKernel):
+class Sum(MathOperation):
     def __init__(self, k1, k2):
         super().__init__(k1, k2)
         self.operation = lambda k1, k2: k1 + k2

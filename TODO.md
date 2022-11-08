@@ -7,3 +7,6 @@
 # Thoughts
 - Support classification by generalizing likelihood?
 - Want to support separate X_inducing for GP, kernel and noise?
+
+# Pending
+- Enable an option outside to train i) latent gp noise or not ii) latent gp hyperparams or not

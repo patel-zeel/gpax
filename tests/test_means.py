@@ -6,7 +6,7 @@ import pytest
 import jax
 import jax.numpy as jnp
 
-from gpax.means import ScalarMean, ZeroMean
+from gpax.means import Scalar, Zero
 from gpax.core import get_default_bijector
 from tests.utils import assert_same_pytree
 
@@ -14,9 +14,9 @@ from tests.utils import assert_same_pytree
 @pytest.mark.parametrize(
     "Mean, kwargs, expected, bijectors_expected",
     [
-        (ScalarMean, {"value": 0.0}, {"value": jnp.zeros(())}, {"value": get_default_bijector()}),
-        (ScalarMean, {"value": 1.0}, {"value": jnp.ones(())}, {"value": get_default_bijector()}),
-        (ZeroMean, {}, {}, {}),
+        (Scalar, {"value": 0.0}, {"value": jnp.zeros(())}, {"value": get_default_bijector()}),
+        (Scalar, {"value": 1.0}, {"value": jnp.ones(())}, {"value": get_default_bijector()}),
+        (Zero, {}, {}, {}),
     ],
 )
 def test_initialize(Mean, kwargs, expected, bijectors_expected):
