@@ -76,7 +76,7 @@ class HeteroscedasticHeinonen(Likelihood):
         likelihood_variance = repeat_to_size(likelihood_variance, X_prior.shape[0])
 
         raw_covariance = self.latent_gp.kernel(params["latent_gp"]["kernel"])(X_prior, X_prior)
-        raw_noise = self.latent_gp.likelihood(params["latent_gp"]["likelihood"])
+        raw_noise = 0.0
         noisy_raw_covariance = add_to_diagonal(raw_covariance, raw_noise, get_default_jitter())
         cholesky = jnp.linalg.cholesky(noisy_raw_covariance)
         raw_likelihood_variance = positive_bijector.inverse(likelihood_variance)
@@ -87,7 +87,18 @@ class HeteroscedasticHeinonen(Likelihood):
     def __call__(self, params, aux, prior_type=None):
         positive_bijector = get_positive_bijector()
         if "X_inducing" in aux:  # For inducing point methods
-            pass
+            latent_gp_mean = self.latent_gp.mean(params["latent_gp"]["mean"])  # Only scalar mean is supported
+            latent_gp_mean = repeat_to_size(latent_gp_mean, aux["X_inducing"].shape[0])
+            raw_covariance = self.latent_gp.kernel(params["latent_gp"]["kernel"])(aux["X_inducing"], aux["X_inducing"])
+            raw_noise = 0.0
+            noisy_covariance = add_to_diagonal(raw_covariance, raw_noise, get_default_jitter())
+            cholesky = jnp.linalg.cholesky(noisy_covariance)
+            cross_covariance = self.latent_gp.kernel(params["latent_gp"]["kernel"])(aux["X"], aux["X_inducing"])
+            test_covariance = self.latent_gp.kernel(params["latent_gp"]["kernel"])(aux["X"], aux["X"])
+            
+            pred_mean = cross_covariance@jsp.linalg.cho_solve((cholesky, True), latent_gp_mean)
+            k_inv_kt = jsp.linalg.cho_solve((cholesky, True), cross_covariance.T)
+            pred_cov = test_covariance - cross_covariance@k_inv_kt + k_inv_kt.T@
             # raw_covariance = self.latent_gp.kernel(params["latent_gp"]["kernel"])(aux["X_inducing"], aux["X_inducing"])
             # raw_noise = self.latent_gp.likelihood(params["latent_gp"]["likelihood"])
             # noisy_raw_covariance = add_to_diagonal(raw_covariance, raw_noise, get_default_jitter())
