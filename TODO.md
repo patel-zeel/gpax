@@ -10,3 +10,4 @@
 
 # Pending
 - Enable an option outside to train i) latent gp noise or not ii) latent gp hyperparams or not
+- Add mu also during reparametrization.
