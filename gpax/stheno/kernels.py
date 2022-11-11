@@ -55,15 +55,15 @@ class GibbsKernel(Kernel):
             l_avg_square = (l1**2 + l2**2) / 2.0
             l_avg = B.sqrt(l_avg_square)
             prefix_part = B.sqrt(l1 * l2 / l_avg_square).prod()
-            x1 = x1 / l_avg
-            x2 = x2 / l_avg
+            x1_scaled = x1 / l_avg
+            x2_scaled = x2 / l_avg
         else:
             lengthscale = self.params["lengthscale"]
-            x1 = x1 / lengthscale
-            x2 = x2 / lengthscale
+            x1_scaled = x1 / lengthscale
+            x2_scaled = x2 / lengthscale
             prefix_part = 1.0
 
-        exp_part = B.exp(-0.5 * ((x1 - x2) ** 2).sum())
+        exp_part = B.exp(-0.5 * ((x1_scaled - x2_scaled) ** 2).sum())
 
         if self.flex_variance:
             predict_fn = jax.jit(self.predict_var)
