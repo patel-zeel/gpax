@@ -11,7 +11,7 @@ from gpax.models import ExactGPRegression
 from gpax.means import Scalar
 from gpax.kernels import RBF
 
-from gpax.utils import constrain
+from gpax.utils import constrain, unconstrain
 from tests.utils import assert_same_pytree
 
 
@@ -33,12 +33,13 @@ def test_heteroscedastic_gaussian():
     X = jax.random.normal(jax.random.PRNGKey(0), (num_datapoints, num_dims))
     X_inducing = jax.random.normal(jax.random.PRNGKey(0), (num_inducing, 2))
     latent_gp = ExactGPRegression(kernel=RBF(), mean=Scalar(), likelihood=Gaussian())
-    likelihood = HeteroscedasticGaussian(latent_gp=latent_gp)
+    likelihood = HeteroscedasticGaussian(latent_gp=latent_gp, prior_type="gp_neurips")
 
-    params = likelihood.initialize_params(key=jax.random.PRNGKey(0), aux={"X": X})
-    assert params["whitened_raw_likelihood_variance"].shape == (num_datapoints,)
-    params = constrain(params, likelihood.constraints)
-
-    params = likelihood.initialize_params(key=jax.random.PRNGKey(0), aux={"X": X, "X_inducing": X_inducing})
-    assert params["whitened_raw_likelihood_variance"].shape == (num_inducing,)
-    params = constrain(params, likelihood.constraints)
+    aux = {"X": X, "X_inducing": X_inducing}
+    params = likelihood.initialize_params(key=jax.random.PRNGKey(0), aux=aux)
+    assert params["whitened_raw_variance"].shape == (num_inducing,)
+    
+    infered_variance = likelihood(params, aux)
+    assert infered_variance.shape == (num_datapoints,)
+    
+    params = unconstrain(params, likelihood.constraints)

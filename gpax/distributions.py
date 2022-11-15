@@ -26,6 +26,14 @@ class TransformedDistribution(Distribution):
         return self.distribution.log_prob(self.bijector.inverse(value)) + self.bijector.inverse_log_jacobian(value)
 
 
+class Fixed(Distribution):
+    """
+    To suggest that do not change the value of the parameter.
+    """
+
+    pass
+
+
 class Normal(Distribution):
     def __init__(self, loc=0.0, scale=1.0):
         self.loc = loc

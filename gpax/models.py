@@ -1,11 +1,12 @@
 import jax
+import jax.tree_util as jtu
 import jax.numpy as jnp
 import jax.scipy as jsp
 from jax.flatten_util import ravel_pytree
 
 from gpax.utils import constrain, unconstrain
 
-from gpax.core import Base, get_default_jitter
+from gpax.core import Base, get_default_jitter, get_default_bijector
 from gpax.utils import add_to_diagonal, get_a_inv_b
 
 
@@ -17,18 +18,15 @@ class Model(Base):
         return unconstrain(params, self.constraints)
 
 
-class ExactGPRegression(Model):
-    def __init__(self, kernel, likelihood, mean):
-        self.kernel = kernel
-        self.likelihood = likelihood
-        self.mean = mean
+class GPRegression(Model):
+    def __init__(self, kernel, likelihood, mean, n_dims, n_inducing=None):
+        self.components = {"kernel": kernel, "likelihood": likelihood, "mean": mean}
+        self.n_dims = n_dims
+        self.n_inducing = n_inducing
 
     def __initialize_params__(self, aux):
-        params = {
-            "kernel": self.kernel.__initialize_params__(aux),
-            "likelihood": self.likelihood.__initialize_params__(aux),
-            "mean": self.mean.__initialize_params__(aux),
-        }
+        params = jtu.tree_map(lambda x: x.__initialize_params__(aux), self.components)
+
         # constraints
         self.constraints = {
             "kernel": self.kernel.constraints,
@@ -36,12 +34,19 @@ class ExactGPRegression(Model):
             "mean": self.mean.constraints,
         }
 
+        if self.X_inducing is not None:
+            self.constraints["X_inducing"] = get_default_bijector()
+
         # priors
         self.priors = {
             "kernel": self.kernel.priors,
             "likelihood": self.likelihood.priors,
             "mean": self.mean.priors,
         }
+
+        if self.X_inducing is not None:
+            self.priors["X_inducing"] = None
+
         return params
 
     def __post_initialize_params__(self, params, aux):
@@ -51,21 +56,15 @@ class ExactGPRegression(Model):
             "mean": self.mean.__post_initialize_params__(params["mean"], aux),
         }
 
-    def log_probability(self, params, X, y, prior_type=None):
+    def log_probability(self, params, X, y):
         """
         prior_type: default: None, possible values: "prior", "posterior", None
         """
         # kernel
-        if prior_type is None:
-            covariance = self.kernel(params["kernel"])(X, X)
-        else:
-            covariance, log_kernel_prior = self.kernel(params["kernel"], prior_type=prior_type)(X, X)
+        covariance = self.kernel(params["kernel"])(X, X)
 
         # likelihood
-        if prior_type is None:
-            likelihood_variance = self.likelihood(params["likelihood"])
-        else:
-            likelihood_variance, log_likelihood_prior = self.likelihood(params["likelihood"], prior_type=prior_type)
+        likelihood_variance = self.likelihood(params["likelihood"], X, X_inducing)
 
         # mean
         mean = self.mean(params["mean"], aux={"y": y})
@@ -93,18 +92,18 @@ class ExactGPRegression(Model):
         """
 
         # kernel
-        kernel_fn = self.kernel(params)
+        kernel_fn = self.kernel(params["kernel"])
         train_cov = kernel_fn(X, X)
 
         # likelihood
-        noise = self.likelihood(params)
+        noise_variance = self.likelihood(params["likelihood"])
 
         # mean
-        mean = self.mean(params, aux={"y": y})
+        mean = self.mean(params["mean"], aux={"y": y})
 
         y_bar = y - mean
-        noisy_covariance = self.add_noise(train_cov, noise)
-        k_inv_y, k_cholesky = self.get_a_inv_b(noisy_covariance, y_bar, return_cholesky=True)
+        noisy_covariance = add_to_diagonal(train_cov, noise_variance, get_default_jitter())
+        k_inv_y, k_cholesky = get_a_inv_b(noisy_covariance, y_bar, return_cholesky=True)
 
         def predict_fn(X_test, return_cov=True, include_noise=True):
             K_star = kernel_fn(X_test, X)
@@ -114,7 +113,12 @@ class ExactGPRegression(Model):
                 k_inv_k_star = jsp.linalg.cho_solve((k_cholesky, True), K_star.T)
                 pred_cov = kernel_fn(X_test, X_test) - (K_star @ k_inv_k_star)
                 if include_noise:
-                    pred_cov = add_to_diagonal(pred_cov, self.noise(params, X_test), get_default_jitter())
+                    aux = {"X": X_test}
+                    if "X_inducing" in params:
+                        aux["X_inducing"] = params["X_inducing"]
+                    pred_cov = add_to_diagonal(
+                        pred_cov, self.likelihood(params["likelihood"], aux=aux), get_default_jitter()
+                    )
                 return pred_mean, pred_cov
             else:
                 return pred_mean

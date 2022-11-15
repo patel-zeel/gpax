@@ -4,71 +4,19 @@ import jax
 import jax.tree_util as jtu
 import jax.numpy as jnp
 
+
+from gpax.utils import constrain, unconstrain
 import gpax.bijectors as gb
 import gpax.distributions as gd
+from chex import dataclass
+from dataclasses import field
 
 import inspect
 
-
-class Base:
-    """
-    This class provides a skeleton for all classes.
-    """
-
-    def initialize_params(self, key=None, aux=None):
-        init_params = self.__initialize_params__(aux)
-        init_params = jtu.tree_map(lambda x: jnp.asarray(x), init_params)
-        if key is None:
-            params = init_params
-        else:
-            params = sample_params(init_params, self.priors, self.constraints, key)
-
-        params = self.__post_initialize_params__(params, aux)
-        return params
-
-    def __post_initialize_params__(self, params, aux):
-        return params
-
-    def __initialize_params__(self, aux):
-        raise NotImplementedError("This method must be implemented by a subclass.")
+pytree = jtu.register_pytree_node_class
 
 
-def sample_params(params, priors, bijectors, key, generic_sampler=jax.random.normal):
-    seeds = seeds_like(params, key)
-
-    def _randomize(param, prior, bijector, seed):
-        if prior is None:
-            sample = generic_sampler(seed, param.shape)
-            return bijector(sample)
-        else:
-            return prior.sample(seed=seed)
-
-    return jtu.tree_map(
-        lambda prior, param, bijector, seed: _randomize(param, prior, bijector, seed),
-        priors,
-        params,
-        bijectors,
-        seeds,
-        is_leaf=lambda x: x is None,
-    )
-
-
-def get_raw_log_prior(priors, params, bijectors):
-    def _get_raw_log_prior(prior, param, bijector):
-        if prior is None:
-            return jnp.zeros_like(param)
-        else:
-            return prior.log_prob(param) - bijector.inverse_log_jacobian(param)
-
-    return jtu.tree_map(
-        lambda prior, param, bijector: _get_raw_log_prior(prior, param, bijector), priors, params, bijectors
-    )
-
-
-def seeds_like(params, key):
-    values, treedef = jtu.tree_flatten(params)
-    keys = [key for key in jax.random.split(key, len(values))]
-    return jtu.tree_unflatten(treedef, keys)
+# Core functions
 
 
 def set_default_prior(prior):
@@ -107,3 +55,90 @@ def set_default_jitter(jitter):
 
 def get_default_jitter():
     return float(os.environ["DEFAULT_JITTER"])
+
+
+set_default_prior(gd.Normal)
+set_default_bijector(gb.Identity)
+set_positive_bijector(gb.Exp)
+
+# Core classes
+
+
+@dataclass
+class Module:
+    """
+    This class provides a skeleton for all classes.
+    """
+
+    default_sampler: gd.Distribution = get_positive_bijector()(gd.Normal(0.0, 1.0))
+    modules: dict = field(default_factory=lambda: {})
+
+    def init_params(self, key):
+        def _randomize(prior, flat_param, key):
+            if prior is None:
+                return self.default_sampler.sample(key, flat_param.shape)
+            elif isinstance(prior, gd.Fixed):
+                return flat_param
+            else:
+                return prior.sample(key, flat_param.shape)
+
+        params = self.get_params()
+        flat_params, treedef = jtu.tree_flatten(params)
+        priors, _ = jtu.tree_flatten(self.priors, is_leaf=lambda x: isinstance(x, gd.Distribution))
+        keys = [key for key in jax.random.split(key, len(flat_params))]
+
+        random_values = jtu.tree_map(
+            lambda prior, flat_param, key: _randomize(prior, flat_param, key), priors, flat_params, keys
+        )
+        params = treedef.unflatten(random_values)
+        self.set_params(params)
+        self._post_init_params()
+
+    def _post_init_params(self):
+        pass
+
+    def constrain(self):
+        params = self.get_params()
+        params = constrain(params, self.constraints)
+        self.set_params(params)
+
+    def unconstrain(self):
+        params = self.get_params()
+        params = unconstrain(params, self.constraints)
+        self.set_params(params)
+
+
+@dataclass
+class Model(Module):
+    """
+    This class provides a skeleton for all models.
+    """
+
+    pass
+
+
+@dataclass
+class Kernel(Module):
+    """
+    A meta class to define a kernel.
+    """
+
+    pass
+
+
+@dataclass
+class Likelihood(Module):
+    """
+    A meta class to define a likelihood.
+    """
+
+    pass
+
+
+@dataclass
+class Mean(Module):
+    """
+    A meta class to define a mean function.
+    """
+
+    pass

@@ -1,10 +1,4 @@
-from ._version import version as __version__  # noqa
-
-import os
-import warnings
-
-import jax
-import jax.numpy as jnp
+# from ._version import version as __version__  # noqa
 
 from gpax.core import set_default_jitter, set_default_prior, set_positive_bijector, set_default_bijector
 import gpax.distributions as gd

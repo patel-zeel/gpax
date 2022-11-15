@@ -26,8 +26,8 @@ class Kernel(Base):
             else:
                 raise ValueError("aux must contain X or X_inducing")
 
-    def __call__(self, params, prior_type=None, aux=None):
-        kernel_fn = self.call(params, prior_type, aux)
+    def __call__(self, params, aux=None, prior_type=None):
+        kernel_fn = self.call(params, aux, prior_type)
         if isinstance(self, MathOperation):
             return kernel_fn
         else:
@@ -57,7 +57,7 @@ class Smooth(Kernel):
         self.lengthscale_prior = lengthscale_prior
         self.variance_prior = variance_prior
 
-    def call(self, params, prior_type=None, aux=None):
+    def call(self, params, aux=None, prior_type=None):
         kernel_fn = self.get_kernel_fn(params, aux)
         kernel_fn = jax.vmap(kernel_fn, in_axes=(None, 0))
         kernel_fn = jax.vmap(kernel_fn, in_axes=(0, None))
@@ -105,9 +105,9 @@ class Smooth(Kernel):
 class RBF(Smooth):
     def get_kernel_fn(self, params, aux):
         def _kernel_fn(X1, X2):
-            X1 = X1 / params["lengthscale"]
-            X2 = X2 / params["lengthscale"]
-            exp_part = jnp.exp(-0.5 * squared_distance(X1, X2))
+            X1_scaled = X1 / params["lengthscale"]
+            X2_scaled = X2 / params["lengthscale"]
+            exp_part = jnp.exp(-0.5 * squared_distance(X1_scaled, X2_scaled))
             return (params["variance"] * exp_part).squeeze()
 
         return _kernel_fn
@@ -123,9 +123,9 @@ SquaredExp = RBF
 class Matern12(Smooth):
     def get_kernel_fn(self, params, aux):
         def _kernel_fn(X1, X2):
-            X1 = X1 / params["lengthscale"]
-            X2 = X2 / params["lengthscale"]
-            exp_part = jnp.exp(-distance(X1, X2))
+            X1_scaled = X1 / params["lengthscale"]
+            X2_scaled = X2 / params["lengthscale"]
+            exp_part = jnp.exp(-distance(X1_scaled, X2_scaled))
             return (params["variance"] * exp_part).squeeze()
 
         return _kernel_fn
@@ -137,9 +137,9 @@ class Matern12(Smooth):
 class Matern32(Smooth):
     def get_kernel_fn(self, params, aux):
         def _kernel_fn(X1, X2):
-            X1 = X1 / params["lengthscale"]
-            X2 = X2 / params["lengthscale"]
-            arg = jnp.sqrt(3.0) * distance(X1, X2)
+            X1_scaled = X1 / params["lengthscale"]
+            X2_scaled = X2 / params["lengthscale"]
+            arg = jnp.sqrt(3.0) * distance(X1_scaled, X2_scaled)
             exp_part = (1.0 + arg) * jnp.exp(-arg)
             return (params["variance"] * exp_part).squeeze()
 
@@ -152,9 +152,9 @@ class Matern32(Smooth):
 class Matern52(Smooth):
     def get_kernel_fn(self, params, aux):
         def _kernel_fn(X1, X2):
-            X1 = X1 / params["lengthscale"]
-            X2 = X2 / params["lengthscale"]
-            arg = jnp.sqrt(5.0) * distance(X1, X2)
+            X1_scaled = X1 / params["lengthscale"]
+            X2_scaled = X2 / params["lengthscale"]
+            arg = jnp.sqrt(5.0) * distance(X1_scaled, X2_scaled)
             exp_part = (1 + arg + jnp.square(arg) / 3) * jnp.exp(-arg)
             return (params["variance"] * exp_part).squeeze()
 
@@ -180,9 +180,9 @@ class Polynomial(Smooth):
 
     def get_kernel_fn(self, params, aux):
         def _kernel_fn(X1, X2):
-            X1 = X1 / params["lengthscale"]
-            X2 = X2 / params["lengthscale"]
-            return ((X1 @ X2 + params["variance"]) ** self.order).squeeze()
+            X1_scaled = X1 / params["lengthscale"]
+            X2_scaled = X2 / params["lengthscale"]
+            return ((X1_scaled @ X2_scaled + params["variance"]) ** self.order).squeeze()
 
         return _kernel_fn
 

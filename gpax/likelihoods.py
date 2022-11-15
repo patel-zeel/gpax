@@ -2,134 +2,132 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import jax.tree_util as jtu
-from gpax.core import Base, get_default_prior, get_positive_bijector, get_default_bijector, get_default_jitter
+from gpax.core import (
+    Model,
+    pytree,
+    Likelihood,
+    get_default_prior,
+    get_positive_bijector,
+    get_default_bijector,
+    get_default_jitter,
+)
 from gpax.utils import add_to_diagonal, repeat_to_size
+from chex import dataclass
+from dataclasses import field
+from jaxtyping import Array
+
+import gpax.distributions as gd
 
 
-class Likelihood(Base):
-    """
-    A meta class to define a likelihood.
-    """
-
-    pass
-
-
+@pytree
+@dataclass
 class Gaussian(Likelihood):
-    def __init__(self, variance=1.0, variance_prior=None):
-        self.variance = variance
-        self.variance_prior = variance_prior
+    variance: float = 1.0
+    variance_prior: gd.Distribution = None
 
-    def __call__(self, params, prior_type=None):
-        if prior_type is not None:
-            return params["variance"], jnp.array(0.0)
-        else:
-            return params["variance"]
-
-    def __initialize_params__(self, aux):
-        params = {"variance": self.variance}
+    def __post_init__(self):
         self.priors = {"variance": self.variance_prior}
         self.constraints = {"variance": get_positive_bijector()}
-        return params
+
+    def __call__(self):
+        return self.variance
+
+    def get_params(self):
+        return {"variance": self.variance}
+
+    def set_params(self, params):
+        self.variance = params["variance"]
+
+    def tree_flatten(self):
+        aux = {"variance_prior": self.variance_prior, "constraints": self.constraints}
+        return (self.variance,), aux
+
+    @classmethod
+    def tree_unflatten(cls, params, aux):
+        return cls(variance=params[0], **aux)
 
 
-class HeteroscedasticHeinonen(Likelihood):
-    def __init__(
-        self,
-        latent_gp=None,
-        likelihood_variance=1.0,
-    ):
-        self.latent_gp = latent_gp
-        self.likelihood_variance = likelihood_variance
+@pytree
+@dataclass
+class HeteroscedasticGaussian(Likelihood):
+    latent_gp: Model = None
+    X_inducing: Array = None
+    variance: float = 1.0
+    whitened_raw_variance: Array = None
+    prior_type: str = "gp_neurips"
 
-    def __initialize_params__(self, aux):
-        params = {
-            "latent_gp": self.latent_gp.__initialize_params__(aux),
-            "dummy_likelihood_variance": self.likelihood_variance,
-        }
-
+    def __post_init__(self):
+        assert self.latent_gp is not None, "latent_gp must be provided"
+        assert self.X_inducing is not None, "X_inducing must be provided"
+        self.modules = {"latent_gp": self.latent_gp}
         self.priors = {
             "latent_gp": self.latent_gp.priors,
-            "dummy_likelihood_variance": None,
+            "variance": None,
         }
         self.constraints = {
             "latent_gp": self.latent_gp.constraints,
-            "dummy_likelihood_variance": get_positive_bijector(),
+            "variance": get_positive_bijector(),
         }
 
+    def get_params(self):
+        params = {"latent_gp": self.latent_gp.get_params()}
+        if "variance" in self.priors:
+            params["variance"] = self.variance
+        else:
+            params["whitened_raw_variance"] = self.whitened_raw_variance
         return params
 
-    def __post_initialize_params__(self, params, aux):
-        # Some initial jobs
-        self.priors["whitened_raw_likelihood_variance"] = None
-        self.constraints["whitened_raw_likelihood_variance"] = get_default_bijector()
-        self.priors.pop("dummy_likelihood_variance")
-        self.constraints.pop("dummy_likelihood_variance")
+    def set_params(self, params):
+        self.latent_gp.set_params(params["latent_gp"])
+        if "variance" in self.priors:
+            self.variance = params["variance"]
+        else:
+            self.whitened_raw_variance = params["whitened_raw_variance"]
 
-        likelihood_variance = params.pop("dummy_likelihood_variance")
+    def _post_init_params__(self):
+        if self.variance is None:
+            return
+        self.priors["whitened_raw_variance"] = get_default_prior()
+        self.constraints["whitened_raw_variance"] = get_default_bijector()
+        self.priors.pop("variance")
+        self.constraints.pop("variance")
+
         positive_bijector = get_positive_bijector()
 
-        if "X_inducing" in aux:  # For inducing point methods
-            X_prior = aux["X_inducing"]
-        else:  
-            X_prior = aux["X"]
+        variance = repeat_to_size(variance, self.X_inducing.shape[0])
 
-        likelihood_variance = repeat_to_size(likelihood_variance, X_prior.shape[0])
-
-        raw_covariance = self.latent_gp.kernel(params["latent_gp"]["kernel"])(X_prior, X_prior)
+        raw_covariance = self.latent_gp.kernel(self.X_inducing, self.X_inducing)
         raw_noise = 0.0
         noisy_raw_covariance = add_to_diagonal(raw_covariance, raw_noise, get_default_jitter())
         cholesky = jnp.linalg.cholesky(noisy_raw_covariance)
-        raw_likelihood_variance = positive_bijector.inverse(likelihood_variance)
-        whitened_raw_likelihood_variance = jsp.linalg.solve_triangular(cholesky, raw_likelihood_variance, lower=True)
-        params["whitened_raw_likelihood_variance"] = whitened_raw_likelihood_variance
-        return params
+        raw_variance = positive_bijector.inverse(variance)
+        raw_mean = self.latent_gp.mean()
+        self.whitened_raw_variance = jsp.linalg.solve_triangular(cholesky, raw_variance - raw_mean, lower=True)
 
-    def __call__(self, params, aux, prior_type=None):
+    def __call__(self, X):
         positive_bijector = get_positive_bijector()
-        if "X_inducing" in aux:  # For inducing point methods
-            latent_gp_mean = self.latent_gp.mean(params["latent_gp"]["mean"])  # Only scalar mean is supported
-            latent_gp_mean = repeat_to_size(latent_gp_mean, aux["X_inducing"].shape[0])
-            raw_covariance = self.latent_gp.kernel(params["latent_gp"]["kernel"])(aux["X_inducing"], aux["X_inducing"])
-            raw_noise = 0.0
-            noisy_covariance = add_to_diagonal(raw_covariance, raw_noise, get_default_jitter())
-            cholesky = jnp.linalg.cholesky(noisy_covariance)
-            cross_covariance = self.latent_gp.kernel(params["latent_gp"]["kernel"])(aux["X"], aux["X_inducing"])
-            test_covariance = self.latent_gp.kernel(params["latent_gp"]["kernel"])(aux["X"], aux["X"])
-            
-            pred_mean = cross_covariance@jsp.linalg.cho_solve((cholesky, True), latent_gp_mean)
-            k_inv_kt = jsp.linalg.cho_solve((cholesky, True), cross_covariance.T)
-            pred_cov = test_covariance - cross_covariance@k_inv_kt + k_inv_kt.T@
-            # raw_covariance = self.latent_gp.kernel(params["latent_gp"]["kernel"])(aux["X_inducing"], aux["X_inducing"])
-            # raw_noise = self.latent_gp.likelihood(params["latent_gp"]["likelihood"])
-            # noisy_raw_covariance = add_to_diagonal(raw_covariance, raw_noise, get_default_jitter())
-            # raw_cholesky = jnp.linalg.cholesky(noisy_raw_covariance)
-            # raw_likelihood_variance = raw_cholesky @ params["whitened_raw_likelihood_variance"]
-        else:
-            pass
+        if self.prior_type == "gp_neurips":
+            inducing_cov = self.latent_gp.kernel(self.X_inducing, self.X_inducing)
+            stable_inducing_cov = add_to_diagonal(inducing_cov, 0.0, get_default_jitter())
+            cholesky = jnp.linalg.cholesky(stable_inducing_cov)
 
-        if "X_inducing" in aux:
-            raw_inferred_likelihood_variance = self.latent_gp.predict(
-                params["latent_gp"], X_prior, raw_likelihood_variance, aux["X"], return_cov=False
-            )
-            likelihood_variance = positive_bijector(raw_inferred_likelihood_variance)
-        else:
-            likelihood_variance = positive_bijector(raw_likelihood_variance)
+            raw_mean = self.latent_gp.mean()
 
-        if prior_type is None:
-            return likelihood_variance
-        elif prior_type == "prior":  # Non-Stationary Gaussian Process Regression with Hamiltonian Monte Carlo
-            # l ~ N(\mu, \Sigma)
-            # LL^T = \Sigma
-            # l_tilde ~ N(L^-1\mu, I)
-            mu = self.latent_gp.mean(params["latent_gp"]["mean"], aux={"y": params["whitened_raw_likelihood_variance"]})
-            mu = repeat_to_size(mu, X_prior.shape[0])
-            whitened_mu = jsp.linalg.solve_triangular(raw_cholesky, mu, lower=True)
-            log_prior = jsp.stats.norm.logpdf(
-                params["whitened_raw_likelihood_variance"], loc=whitened_mu, scale=1.0
-            ).sum()
-            return likelihood_variance, log_prior
-        elif prior_type == "posterior":  # Nonstationary Gaussian Process Regression Using Point Estimates of Local Smoothness
-            
+            raw_variance = raw_mean + cholesky @ self.whitened_raw_variance
+
+            raw_infered_variance = self.latent_gp.predict(self.X_inducing, raw_variance, X)
+            infered_variance = positive_bijector(raw_infered_variance)
+            return infered_variance
+        else:
+            raise NotImplementedError(f"{self.prior_type=} is not implemented.")
+
+    def tree_flatten(self):
+        latent_gp_params, latent_gp_treedef = jtu.tree_flatten(self.latent_gp)
+
+    @classmethod
+    def tree_unflatten(cls, params, aux):
+        aux[""]
+        return cls(variance=params[0], **aux)
 
 
 # class HeinonenHeteroscedasticNoise(Noise):
