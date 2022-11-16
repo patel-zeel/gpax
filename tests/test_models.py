@@ -10,6 +10,7 @@ from gpax.models import ExactGPRegression
 from gpax.kernels import RBF
 from gpax.likelihoods import Gaussian
 from gpax.means import Scalar
+from tests.utils import assert_same_pytree, assert_approx_same_pytree
 
 # from gpax.special_kernels import GibbsKernel
 from stheno.jax import EQ, GP, OneMean, PseudoObs
@@ -23,31 +24,55 @@ keys = jax.random.split(key, 2)
 X = jax.random.normal(keys[0], (10, 3))
 y = jax.random.normal(keys[1], (10,))
 
-keys = [key for key in jax.random.split(keys[-1], 3)]
+n_tests = 10
+keys = [key for key in jax.random.split(keys[-1], n_tests)]
 
 
 def stheno_log_prob(params):
     stheno_gp = GP(
         params["mean"]["value"] * OneMean(),
-        params["kernel"]["variance"] * EQ().stretch(params["kernel"]["lengthscale"]),
+        params["kernel"]["scale"] ** 2 * EQ().stretch(params["kernel"]["lengthscale"]),
     )
-    return stheno_gp(X, params["likelihood"]["variance"]).logpdf(y)
+    return stheno_gp(X, params["likelihood"]["scale"] ** 2).logpdf(y)
 
 
 @pytest.mark.parametrize("key", keys)
 @pytest.mark.parametrize(
     "kernel",
     [
-        RBF(),
+        RBF,
         # GibbsKernel(flex_scale=False, flex_variance=False),
     ],
 )
 def test_exact_gp(key, kernel):
-    gp = ExactGPRegression(kernel=kernel, likelihood=Gaussian(), mean=Scalar())
-    params = gp.initialize_params(key, aux={"X": X})
-    log_prob = gp.log_probability(params, X, y)
+    gp = ExactGPRegression(kernel=kernel(input_dim=X.shape[1]), likelihood=Gaussian(), mean=Scalar())
+    gp.initialize(key)
+    log_prob = gp.log_probability(X, y)
 
+    params = gp.get_params()
     assert jnp.allclose(log_prob, stheno_log_prob(params))
+
+    # jittable
+    def neg_log_prob(raw_params):
+        gp = ExactGPRegression(kernel=kernel(input_dim=X.shape[1]), likelihood=Gaussian(), mean=Scalar())
+        gp.unconstrain()
+        gp.set_params(raw_params)
+        gp.constrain()
+        return -gp.log_probability(X, y)
+
+    def neg_log_prob_stheno(raw_params):
+        gp = ExactGPRegression(kernel=kernel(input_dim=X.shape[1]), likelihood=Gaussian(), mean=Scalar())
+        gp.unconstrain()
+        gp.set_params(raw_params)
+        gp.constrain()
+        params = gp.get_params()
+        return -stheno_log_prob(params)
+
+    gp.unconstrain()
+    raw_params = gp.get_params()
+    grads = jax.jit(jax.grad(neg_log_prob))(raw_params)
+    grads_stheno = jax.jit(jax.grad(neg_log_prob_stheno))(raw_params)
+    assert_approx_same_pytree(grads, grads_stheno)
 
 
 # @pytest.mark.parametrize("seed", list(range(5)))

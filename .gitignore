@@ -4,5 +4,6 @@ __pycache__/
 *.pyc
 *.egg-info/
 __pycache__
+build
 gpax/_version.py
 testbed.py

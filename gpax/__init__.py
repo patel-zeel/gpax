@@ -1,14 +1,21 @@
-# from ._version import version as __version__  # noqa
+from ._version import version as __version__  # noqa
 
-from gpax.core import set_default_jitter, set_default_prior, set_positive_bijector, set_default_bijector
-import gpax.distributions as gd
-import gpax.bijectors as gb
+import os
+
+# defaults
+from gpax.defaults import set_default_jitter
+
+# distributions
+from gpax.distributions import Normal
+from gpax.distributions import set_default_prior
+
+# bijectors
+from gpax.bijectors import Identity, Exp
+from gpax.bijectors import set_default_bijector, set_positive_bijector
 
 ## Set defaults
-set_default_prior(gd.Normal)
-set_default_bijector(gb.Identity)
-set_positive_bijector(gb.Exp)
-
 DEFAULT_JITTER = 1e-6
-
+set_default_prior(Normal)
+set_default_bijector(Identity)
+set_positive_bijector(Exp)
 set_default_jitter(DEFAULT_JITTER)

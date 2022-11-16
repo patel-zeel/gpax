@@ -1,76 +1,74 @@
+from __future__ import annotations
 import jax
 import jax.tree_util as jtu
 import jax.numpy as jnp
 import jax.scipy as jsp
 from jax.flatten_util import ravel_pytree
 
-from gpax.utils import constrain, unconstrain
-
-from gpax.core import Base, get_default_jitter, get_default_bijector
+from gpax.core import Module, Parameter
+from gpax.defaults import get_default_jitter
+import gpax.distributions as gd
+import gpax.bijectors as gb
 from gpax.utils import add_to_diagonal, get_a_inv_b
 
+from jaxtyping import Array
+from typing import TYPE_CHECKING
 
-class Model(Base):
-    def constrain(self, params):
-        return constrain(params, self.constraints)
+from chex import dataclass
 
-    def unconstrain(self, params):
-        return unconstrain(params, self.constraints)
+if TYPE_CHECKING:
+    from gpax.kernels import Kernel
+    from gpax.likelihoods import Likelihood
+    from gpax.means import Mean
 
 
-class GPRegression(Model):
-    def __init__(self, kernel, likelihood, mean, n_dims, n_inducing=None):
-        self.components = {"kernel": kernel, "likelihood": likelihood, "mean": mean}
-        self.n_dims = n_dims
-        self.n_inducing = n_inducing
+class Model(Module):
+    pass
 
-    def __initialize_params__(self, aux):
-        params = jtu.tree_map(lambda x: x.__initialize_params__(aux), self.components)
 
-        # constraints
-        self.constraints = {
-            "kernel": self.kernel.constraints,
-            "likelihood": self.likelihood.constraints,
-            "mean": self.mean.constraints,
-        }
+@dataclass
+class ExactGPRegression(Model):
+    kernel: Kernel = None
+    likelihood: Likelihood = None
+    mean: Mean = None
+    X_inducing: Array = None
 
+    def __post_init__(self):
+        assert self.kernel is not None, "kernel must be provided"
+        assert self.likelihood is not None, "likelihood must be provided"
+        assert self.mean is not None, "mean must be provided"
         if self.X_inducing is not None:
-            self.constraints["X_inducing"] = get_default_bijector()
+            X_inducing = Parameter(self.X_inducing, prior=gd.Fixed())
+            self.common_params = {"X_inducing": X_inducing}
+            self.kernel.common_params = self.common_params
+            self.likelihood.common_params = self.common_params
 
-        # priors
-        self.priors = {
-            "kernel": self.kernel.priors,
-            "likelihood": self.likelihood.priors,
-            "mean": self.mean.priors,
+    def __get_params__(self):
+        params = {
+            "kernel": self.kernel.__get_params__(),
+            "likelihood": self.likelihood.__get_params__(),
+            "mean": self.mean.__get_params__(),
         }
-
         if self.X_inducing is not None:
-            self.priors["X_inducing"] = None
-
+            params["X_inducing"] = self.common_params["X_inducing"]
         return params
 
-    def __post_initialize_params__(self, params, aux):
-        return {
-            "kernel": self.kernel.__post_initialize_params__(params["kernel"], aux),
-            "likelihood": self.likelihood.__post_initialize_params__(params["likelihood"], aux),
-            "mean": self.mean.__post_initialize_params__(params["mean"], aux),
-        }
+    def set_params(self, params):
+        self.kernel.set_params(params["kernel"])
+        self.likelihood.set_params(params["likelihood"])
+        self.mean.set_params(params["mean"])
+        if self.X_inducing is not None:
+            self.common_params["X_inducing"].set(params["X_inducing"])
 
-    def log_probability(self, params, X, y):
+    def log_probability(self, X, y):
         """
         prior_type: default: None, possible values: "prior", "posterior", None
         """
-        # kernel
-        covariance = self.kernel(params["kernel"])(X, X)
+        covariance = self.kernel(X, X)
+        noise_scale = self.likelihood(X)
 
-        # likelihood
-        likelihood_variance = self.likelihood(params["likelihood"], X, X_inducing)
-
-        # mean
-        mean = self.mean(params["mean"], aux={"y": y})
-
-        y_bar = y - mean
-        noisy_covariance = add_to_diagonal(covariance, likelihood_variance, get_default_jitter())
+        y_bar = y - self.mean(y=y)
+        noisy_covariance = add_to_diagonal(covariance, noise_scale**2, get_default_jitter())
 
         k_inv_y, k_cholesky = get_a_inv_b(noisy_covariance, y_bar, return_cholesky=True)
 
@@ -80,57 +78,41 @@ class GPRegression(Model):
             - 0.5 * y.shape[0] * jnp.log(2 * jnp.pi)
         )
 
-        if prior_type is None:
-            return log_likelihood
-        else:
-            log_prior = log_likelihood_prior + log_kernel_prior
-            return log_likelihood + log_prior
+        return log_likelihood
 
-    def condition(self, params, X, y):
+    def condition(self, X, y):
         """
         This function is useful while doing batch prediction.
         """
+        train_cov = self.kernel(X, X)
+        noise_scale = self.likelihood(X)
 
-        # kernel
-        kernel_fn = self.kernel(params["kernel"])
-        train_cov = kernel_fn(X, X)
-
-        # likelihood
-        noise_variance = self.likelihood(params["likelihood"])
-
-        # mean
-        mean = self.mean(params["mean"], aux={"y": y})
-
+        mean = self.mean(y=y)
         y_bar = y - mean
-        noisy_covariance = add_to_diagonal(train_cov, noise_variance, get_default_jitter())
+        noisy_covariance = add_to_diagonal(train_cov, noise_scale**2, get_default_jitter())
         k_inv_y, k_cholesky = get_a_inv_b(noisy_covariance, y_bar, return_cholesky=True)
 
         def predict_fn(X_test, return_cov=True, include_noise=True):
-            K_star = kernel_fn(X_test, X)
+            K_star = self.kernel(X_test, X)
             pred_mean = K_star @ k_inv_y + mean
 
             if return_cov:
                 k_inv_k_star = jsp.linalg.cho_solve((k_cholesky, True), K_star.T)
-                pred_cov = kernel_fn(X_test, X_test) - (K_star @ k_inv_k_star)
+                pred_cov = self.kernel(X_test, X_test) - (K_star @ k_inv_k_star)
                 if include_noise:
-                    aux = {"X": X_test}
-                    if "X_inducing" in params:
-                        aux["X_inducing"] = params["X_inducing"]
-                    pred_cov = add_to_diagonal(
-                        pred_cov, self.likelihood(params["likelihood"], aux=aux), get_default_jitter()
-                    )
+                    pred_cov = add_to_diagonal(pred_cov, self.likelihood(X_test) ** 2, get_default_jitter())
                 return pred_mean, pred_cov
             else:
                 return pred_mean
 
         return predict_fn
 
-    def predict(self, params, X, y, X_test, return_cov=True, include_noise=True):
+    def predict(self, X, y, X_test, return_cov=True, include_noise=True):
         """
         This method is suitable for one time prediction.
         In case of batch prediction, it is better to use `condition` method in combination with `predict`.
         """
-        predict_fn = self.condition(params, X, y)
+        predict_fn = self.condition(X, y)
         return predict_fn(X_test, return_cov=return_cov, include_noise=include_noise)
 
 

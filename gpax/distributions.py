@@ -1,7 +1,17 @@
+from __future__ import annotations
+import os
 from abc import abstractmethod
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
+from chex import dataclass
+
+import inspect
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from bijectors import Bijector
 
 
 class Distribution:
@@ -14,10 +24,10 @@ class Distribution:
         NotImplementedError("This method must be implemented by a subclass.")
 
 
+@dataclass
 class TransformedDistribution(Distribution):
-    def __init__(self, distribution, bijector):
-        self.distribution = distribution
-        self.bijector = bijector
+    distribution: Distribution
+    bijector: Bijector
 
     def sample(self, seed, sample_shape):
         return self.bijector(self.distribution.sample(seed, sample_shape))
@@ -26,18 +36,31 @@ class TransformedDistribution(Distribution):
         return self.distribution.log_prob(self.bijector.inverse(value)) + self.bijector.inverse_log_jacobian(value)
 
 
+class NoPrior(Distribution):
+    """
+    Prior for MLE parameter estimation.
+    """
+
+    def sample(self, seed, sample_shape):
+        return Normal(loc=0.0, scale=1.0).sample(seed, sample_shape)
+
+    def log_prob(self, value):
+        return jnp.zeros(value.shape)
+
+
 class Fixed(Distribution):
     """
-    To suggest that do not change the value of the parameter.
+    Prior for non-reinitializable parameters e.g. X_inducing.
     """
 
-    pass
+    def log_prob(self, value):
+        return jnp.zeros(value.shape)
 
 
+@dataclass
 class Normal(Distribution):
-    def __init__(self, loc=0.0, scale=1.0):
-        self.loc = loc
-        self.scale = scale
+    loc: float = 0.0
+    scale: float = 1.0
 
     def sample(self, seed, sample_shape):
         return self.loc + jax.random.normal(seed, sample_shape) * self.scale
@@ -46,10 +69,10 @@ class Normal(Distribution):
         return jsp.stats.norm.logpdf(value, loc=self.loc, scale=self.scale)
 
 
+@dataclass
 class Uniform(Distribution):
-    def __init__(self, low=0.0, high=1.0):
-        self.low = low
-        self.high = high
+    low: float = 0.0
+    high: float = 1.0
 
     def sample(self, seed, sample_shape):
         return jax.random.uniform(seed, sample_shape, minval=self.low, maxval=self.high)
@@ -58,10 +81,10 @@ class Uniform(Distribution):
         return jsp.stats.uniform.logpdf(value, loc=self.low, scale=self.high - self.low)
 
 
+@dataclass
 class Gamma(Distribution):
-    def __init__(self, concentration, rate):
-        self.concentration = concentration
-        self.rate = rate
+    concentration: float
+    rate: float
 
     def sample(self, seed, sample_shape):
         return jax.random.gamma(seed, shape=sample_shape, a=self.concentration) / self.rate
@@ -70,11 +93,10 @@ class Gamma(Distribution):
         return jsp.stats.gamma.logpdf(value, a=self.concentration, scale=1 / self.rate)
 
 
+@dataclass
 class Beta(Distribution):
-    def __init__(self, concentration0, concentration1):
-
-        self.concentration0 = concentration0
-        self.concentration1 = concentration1
+    concentration0: float
+    concentration1: float
 
     def sample(self, seed, sample_shape):
         return jax.random.beta(seed, a=self.concentration1, b=self.concentration0, shape=sample_shape)
@@ -83,10 +105,9 @@ class Beta(Distribution):
         return jsp.stats.beta.logpdf(value, a=self.concentration1, b=self.concentration0)
 
 
+@dataclass
 class Exponential(Distribution):
-    def __init__(self, rate):
-
-        self.rate = rate
+    rate: float
 
     def sample(self, seed, sample_shape):
         return jax.random.exponential(seed, shape=sample_shape) / self.rate
@@ -95,10 +116,10 @@ class Exponential(Distribution):
         return jsp.stats.expon.logpdf(value, scale=1 / self.rate)
 
 
+@dataclass
 class Frechet(Distribution):
-    def __init__(self, rate, dim):
-        self.rate = rate
-        self.dim = dim
+    rate: float
+    dim: int
 
     def sample(self, seed, sample_shape):
         samples = jax.random.uniform(key=seed, shape=sample_shape)
@@ -113,3 +134,24 @@ class Frechet(Distribution):
     def log_prob(self, value):
         prefix = jnp.log(self.dim / 2 * self.rate * value ** (-self.dim / 2 - 1))
         return prefix + (-self.rate * value ** (-self.dim / 2))
+
+
+all_distributions = {
+    "Normal": Normal,
+    "Uniform": Uniform,
+    "Gamma": Gamma,
+    "Beta": Beta,
+    "Exponential": Exponential,
+    "Frechet": Frechet,
+}
+
+
+# Getter and Setters
+def set_default_prior(prior):
+    assert inspect.isclass(prior)
+    os.environ["DEFAULT_PRIOR"] = prior.__name__
+
+
+def get_default_prior():
+    prior = all_distributions[os.environ["DEFAULT_PRIOR"]]
+    return prior()

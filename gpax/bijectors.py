@@ -1,21 +1,37 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+from copy import deepcopy
+
+import os
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 
+
+from gpax.defaults import get_default_jitter
 from gpax.distributions import TransformedDistribution, Distribution
-from gpax.utils import vectorized_fn
+from gpax.utils import vectorized_fn, add_to_diagonal, repeat_to_size
+from chex import dataclass
+
+import inspect
+
+if TYPE_CHECKING:
+    from gpax.core import Parameter, Mean
+
+NEAR_ZERO = 1e-10
 
 
 def invert_bijector(bijector):
+    bijector = deepcopy(bijector)
     bijector.forward_fn, bijector.inverse_fn = bijector.inverse_fn, bijector.forward_fn
     return bijector
 
 
-@jax.tree_util.register_pytree_node_class
 class Bijector:
     def __call__(self, ele):
         if isinstance(ele, Distribution):
-            return TransformedDistribution(ele, self)
+            return TransformedDistribution(distribution=ele, bijector=self)
         else:
             return self.forward_fn(ele)
 
@@ -24,7 +40,7 @@ class Bijector:
 
     def inverse(self, ele):
         if isinstance(ele, Distribution):
-            return TransformedDistribution(ele, invert_bijector(self))
+            return TransformedDistribution(distribution=ele, bijector=invert_bijector(self))
         else:
             return self.inverse_fn(ele)
 
@@ -40,63 +56,124 @@ class Bijector:
 
         return vectorized_fn(_inverse_log_jacobian, array, array.shape)
 
-    def tree_flatten(self):
-        return (), None
 
-    @classmethod
-    def tree_unflatten(cls, aux_data, children):
-        return cls()
-
-
-@jax.tree_util.register_pytree_node_class
+@dataclass
 class Log(Bijector):
-    def __init__(self):
-        self.forward_fn = jnp.log
-        self.inverse_fn = jnp.exp
-        self.upper = jnp.inf
-        self.lower = -jnp.inf
+    forward_fn: callable = jnp.log
+    inverse_fn: callable = jnp.exp
+    in_upper: float = jnp.inf
+    in_lower: float = NEAR_ZERO
+    out_upper: float = jnp.inf
+    out_lower: float = -jnp.inf
 
 
-@jax.tree_util.register_pytree_node_class
+@dataclass
 class Exp(Bijector):
-    def __init__(self):
-        self.forward_fn = jnp.exp
-        self.inverse_fn = jnp.log
-        self.upper = jnp.inf
-        self.lower = 0.0
+    forward_fn: callable = jnp.exp
+    inverse_fn: callable = jnp.log
+    in_upper: float = jnp.inf
+    in_lower: float = -jnp.inf
+    out_upper: float = jnp.inf
+    out_lower: float = 0.0
 
 
-@jax.tree_util.register_pytree_node_class
+@dataclass
 class Sigmoid(Bijector):
-    def __init__(self):
-        self.forward_fn = jax.nn.sigmoid
-        self.inverse_fn = jsp.special.logit
-        self.upper = 1.0
-        self.lower = 0.0
+    forward_fn: callable = jax.nn.sigmoid
+    inverse_fn: callable = jsp.special.logit
+    in_upper: float = jnp.inf
+    in_lower: float = -jnp.inf
+    out_upper: float = 1.0
+    out_lower: float = 0.0
 
 
-@jax.tree_util.register_pytree_node_class
+@dataclass
 class Identity(Bijector):
-    def __init__(self):
-        self.forward_fn = lambda x: x
-        self.inverse_fn = lambda x: x
-        self.upper = jnp.inf
-        self.lower = -jnp.inf
+    forward_fn: callable = lambda x: x
+    inverse_fn: callable = lambda x: x
+    in_upper: float = jnp.inf
+    in_lower: float = -jnp.inf
+    out_upper: float = jnp.inf
+    out_lower: float = -jnp.inf
 
 
-@jax.tree_util.register_pytree_node_class
+@dataclass
 class SquarePlus(Bijector):
-    def __init__(self):
-        self.forward_fn = lambda x: 0.5 * (x + jnp.sqrt(jnp.square(x) + 4.0))
-        self.inverse_fn = lambda x: x - 1 / x
-        self.upper = jnp.inf
-        self.lower = 0.0
+    forward_fn: callable = lambda x: 0.5 * (x + jnp.sqrt(jnp.square(x) + 4.0))
+    inverse_fn: callable = lambda x: x - 1 / x
+    in_upper: float = jnp.inf
+    in_lower: float = -jnp.inf
+    out_upper: float = jnp.inf
+    out_lower: float = 0.0
 
 
-@jax.tree_util.register_pytree_node_class
-class SoftPlus(Bijector):
-    def __init__(self):
-        self.forward_fn = lambda x: jnp.log(1 + jnp.exp(x))
-        self.inverse_fn = lambda x: jnp.log(jnp.exp(x) - 1)
-        self.upper = jnp.inf
-        self.lower = 0.0
+@dataclass
+class Softplus(Bijector):
+    forward_fn: callable = jax.nn.softplus
+    inverse_fn: callable = lambda x: jnp.log(jnp.exp(x) - 1)
+    in_upper: float = jnp.inf
+    in_lower: float = -jnp.inf
+    out_upper: float = jnp.inf
+    out_lower: float = 0.0
+
+
+@dataclass
+class White(Bijector):
+    kernel_fn: callable = None
+    X_inducing: Parameter = None
+    mean: Mean = None
+
+    def forward_fn(self, white_value):
+        positive_bijector = get_positive_bijector()
+        X_inducing = self.X_inducing()
+        mean = self.mean()
+        covariance = self.kernel_fn(X_inducing, X_inducing)
+        stable_covariance = add_to_diagonal(covariance, 0.0, get_default_jitter())
+        cholesky = jnp.linalg.cholesky(stable_covariance)
+        raw_value = cholesky @ white_value + mean
+        return positive_bijector(raw_value)
+
+    def inverse_fn(self, value):
+        positive_bijector = get_positive_bijector()
+        X_inducing = self.X_inducing()
+        mean = self.mean()
+
+        value = repeat_to_size(value, X_inducing.shape[0])
+        raw_value = positive_bijector.inverse(value)
+        covariance = self.kernel_fn(X_inducing, X_inducing)
+        stable_covariance = add_to_diagonal(covariance, 0.0, get_default_jitter())
+        cholesky = jnp.linalg.cholesky(stable_covariance)
+
+        raw_value_bar = raw_value - mean
+        white_value = jsp.linalg.solve_triangular(cholesky, raw_value_bar, lower=True)
+        return white_value
+
+
+all_bijectors = {
+    "Log": Log,
+    "Exp": Exp,
+    "Sigmoid": Sigmoid,
+    "Identity": Identity,
+    "SquarePlus": SquarePlus,
+    "Softplus": Softplus,
+}
+
+
+def set_default_bijector(bijector):
+    assert inspect.isclass(bijector)
+    os.environ["DEFAULT_BIJECTOR"] = bijector.__name__
+
+
+def get_default_bijector():
+    bijector = all_bijectors[os.environ["DEFAULT_BIJECTOR"]]
+    return bijector()
+
+
+def set_positive_bijector(bijector):
+    assert inspect.isclass(bijector)
+    os.environ["POSITIVE_BIJECTOR"] = bijector.__name__
+
+
+def get_positive_bijector():
+    bijector = all_bijectors[os.environ["POSITIVE_BIJECTOR"]]
+    return bijector()

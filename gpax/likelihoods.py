@@ -1,133 +1,91 @@
-import jax
-import jax.numpy as jnp
-import jax.scipy as jsp
-import jax.tree_util as jtu
-from gpax.core import (
-    Model,
-    pytree,
-    Likelihood,
-    get_default_prior,
-    get_positive_bijector,
-    get_default_bijector,
-    get_default_jitter,
-)
-from gpax.utils import add_to_diagonal, repeat_to_size
+from __future__ import annotations
+from gpax.core import Parameter
 from chex import dataclass
 from dataclasses import field
+from typing import TYPE_CHECKING
 from jaxtyping import Array
 
 import gpax.distributions as gd
+import gpax.bijectors as gb
+
+from gpax.core import Module
 
 
-@pytree
+@dataclass
+class Likelihood(Module):
+    """
+    A meta class to define a likelihood.
+    """
+
+    pass
+
+
 @dataclass
 class Gaussian(Likelihood):
-    variance: float = 1.0
-    variance_prior: gd.Distribution = None
+    scale: float = 1.0
+    scale_prior: gd.Distribution = None
 
     def __post_init__(self):
-        self.priors = {"variance": self.variance_prior}
-        self.constraints = {"variance": get_positive_bijector()}
+        self.scale = Parameter(self.scale, gb.get_positive_bijector(), self.scale_prior)
 
-    def __call__(self):
-        return self.variance
+    def __call__(self, X):
+        return self.scale()
 
-    def get_params(self):
-        return {"variance": self.variance}
+    def __get_params__(self):
+        return {"scale": self.scale}
 
     def set_params(self, params):
-        self.variance = params["variance"]
-
-    def tree_flatten(self):
-        aux = {"variance_prior": self.variance_prior, "constraints": self.constraints}
-        return (self.variance,), aux
-
-    @classmethod
-    def tree_unflatten(cls, params, aux):
-        return cls(variance=params[0], **aux)
+        self.scale.set(params["scale"])
 
 
-@pytree
 @dataclass
 class HeteroscedasticGaussian(Likelihood):
     latent_gp: Model = None
     X_inducing: Array = None
-    variance: float = 1.0
-    whitened_raw_variance: Array = None
-    prior_type: str = "gp_neurips"
+    scale: float = 1.0
+    scale_prior: gd.Distribution = field(default_factory=lambda: gb.get_positive_bijector()(gd.Normal()))
+    type: str = "gp_neurips"
 
     def __post_init__(self):
-        assert self.latent_gp is not None, "latent_gp must be provided"
-        assert self.X_inducing is not None, "X_inducing must be provided"
-        self.modules = {"latent_gp": self.latent_gp}
-        self.priors = {
-            "latent_gp": self.latent_gp.priors,
-            "variance": None,
-        }
-        self.constraints = {
-            "latent_gp": self.latent_gp.constraints,
-            "variance": get_positive_bijector(),
-        }
+        assert self.latent_gp is not None, "latent_gp must be provided."
+        self.common_params = {}  # placeholder for common parameters
+        if self.X_inducing is not None:
+            self.X_inducing = Parameter(self.X_inducing, gb.get_default_bijector(), gd.Fixed())
 
-    def get_params(self):
-        params = {"latent_gp": self.latent_gp.get_params()}
-        if "variance" in self.priors:
-            params["variance"] = self.variance
-        else:
-            params["whitened_raw_variance"] = self.whitened_raw_variance
+        white_bijector = gb.White(mean=self.latent_gp.mean, kernel_fn=self.latent_gp.kernel)
+        self.scale = Parameter(self.scale, white_bijector, self.scale_prior)
+
+    def __get_params__(self):
+        params = {"latent_gp": self.latent_gp.__get_params__(), "scale": self.scale}
+        if "X_inducing" not in self.common_params and self.X_inducing is not None:
+            params["X_inducing"] = self.X_inducing
+
+        # This is a hack to assign X_inducing to the bijector. Not a good practice in general.
+        self.scale._bijector.X_inducing = self.get_X_inducing()
+
         return params
+
+    def get_X_inducing(self):
+        if "X_inducing" in self.common_params:
+            return self.common_params["X_inducing"]
+        else:
+            assert isinstance(self.X_inducing, Parameter)
+            return self.X_inducing
 
     def set_params(self, params):
         self.latent_gp.set_params(params["latent_gp"])
-        if "variance" in self.priors:
-            self.variance = params["variance"]
-        else:
-            self.whitened_raw_variance = params["whitened_raw_variance"]
-
-    def _post_init_params__(self):
-        if self.variance is None:
-            return
-        self.priors["whitened_raw_variance"] = get_default_prior()
-        self.constraints["whitened_raw_variance"] = get_default_bijector()
-        self.priors.pop("variance")
-        self.constraints.pop("variance")
-
-        positive_bijector = get_positive_bijector()
-
-        variance = repeat_to_size(variance, self.X_inducing.shape[0])
-
-        raw_covariance = self.latent_gp.kernel(self.X_inducing, self.X_inducing)
-        raw_noise = 0.0
-        noisy_raw_covariance = add_to_diagonal(raw_covariance, raw_noise, get_default_jitter())
-        cholesky = jnp.linalg.cholesky(noisy_raw_covariance)
-        raw_variance = positive_bijector.inverse(variance)
-        raw_mean = self.latent_gp.mean()
-        self.whitened_raw_variance = jsp.linalg.solve_triangular(cholesky, raw_variance - raw_mean, lower=True)
+        self.whitened_raw_variance.set(params["whitened_raw_variance"])
+        if self.X_inducing is not None:
+            self.X_inducing.set(params["X_inducing"])
 
     def __call__(self, X):
-        positive_bijector = get_positive_bijector()
-        if self.prior_type == "gp_neurips":
-            inducing_cov = self.latent_gp.kernel(self.X_inducing, self.X_inducing)
-            stable_inducing_cov = add_to_diagonal(inducing_cov, 0.0, get_default_jitter())
-            cholesky = jnp.linalg.cholesky(stable_inducing_cov)
-
-            raw_mean = self.latent_gp.mean()
-
-            raw_variance = raw_mean + cholesky @ self.whitened_raw_variance
-
-            raw_infered_variance = self.latent_gp.predict(self.X_inducing, raw_variance, X)
-            infered_variance = positive_bijector(raw_infered_variance)
-            return infered_variance
+        if self.type == "gp_neurips":
+            X_inducing = self.get_X_inducing()()
+            inducing_scale = self.scale()
+            scale_X = self.latent_gp.predict(X_inducing, inducing_scale, X, include_noise=False, return_cov=False)
+            return scale_X
         else:
             raise NotImplementedError(f"{self.prior_type=} is not implemented.")
-
-    def tree_flatten(self):
-        latent_gp_params, latent_gp_treedef = jtu.tree_flatten(self.latent_gp)
-
-    @classmethod
-    def tree_unflatten(cls, params, aux):
-        aux[""]
-        return cls(variance=params[0], **aux)
 
 
 # class HeinonenHeteroscedasticNoise(Noise):
