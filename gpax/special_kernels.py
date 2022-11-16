@@ -236,6 +236,8 @@ class GibbsKernel(Kernel):
 
     def __get_bijectors__(self):
         bijectors = {}
+        if self.X_inducing is not None:
+            bijectors["X_inducing"] = tfb.Identity()
         if self.flex_scale:
             if self.X_inducing is not None:
                 bijectors["X_inducing"] = Identity()
