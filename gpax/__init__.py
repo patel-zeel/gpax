@@ -1,20 +1,21 @@
 from ._version import version as __version__  # noqa
 
-from gpax.kernels import (
-    RBFKernel,
-    ExpSquaredKernel,
-    SquaredExpKernel,
-    LinearKernel,
-    Matern12Kernel,
-    Matern32Kernel,
-    Matern52Kernel,
-    SumKernel,
-    ProductKernel,
-)
-from gpax.gps import ExactGP, SparseGP
-from gpax.noises import HomoscedasticNoise
-from gpax.means import ConstantMean
-from gpax.special_kernels import GibbsKernel
-from gpax.special_noises import HeteroscedasticNoise
+import os
 
-print("imported sthenogpax version")
+# defaults
+from gpax.defaults import set_default_jitter
+
+# distributions
+from gpax.distributions import Normal
+from gpax.distributions import set_default_prior
+
+# bijectors
+from gpax.bijectors import Identity, Exp
+from gpax.bijectors import set_default_bijector, set_positive_bijector
+
+## Set defaults
+DEFAULT_JITTER = 1e-6
+set_default_prior(Normal)
+set_default_bijector(Identity)
+set_positive_bijector(Exp)
+set_default_jitter(DEFAULT_JITTER)

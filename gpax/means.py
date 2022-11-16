@@ -1,37 +1,42 @@
-import jax.numpy as jnp
-import jax.tree_util as tree_util
-
-import tensorflow_probability.substrates.jax as tfp
-
-tfb = tfp.bijectors
-
+from gpax.core import Parameter
+import gpax.distributions as gd
+from gpax.core import Module
 from chex import dataclass
-from gpax.base import Base
+
+
+class Mean(Module):
+    """
+    A meta class to define a mean function.
+    """
+
+    pass
 
 
 @dataclass
-class Mean(Base):
-    def initialise_params(self, key):
-        params = {"mean": self.__initialise_params__(key)}
-        return tree_util.tree_map(lambda x: jnp.asarray(x), params)
+class Scalar(Mean):
+    value: float = 1.0
+    value_prior: gd.Distribution = None
 
-    def get_bijectors(self):
-        return {"mean": self.__get_bijectors__()}
+    def __post_init__(self):
+        self.value = Parameter(self.value, prior=self.value_prior)
+
+    def __call__(self, y=None):
+        return self.value()
+
+    def __get_params__(self):
+        return {"value": self.value}
+
+    def set_params(self, params):
+        self.value.set(params["value"])
 
 
 @dataclass
-class ConstantMean(Mean):
-    value: float = 0.0
+class Average(Mean):
+    def __call__(self, y):
+        return y.mean()
 
-    def call(self, params):
-        params = params["mean"]
-        return params["value"]
+    def __get_params__(self):
+        return {}
 
-    def __initialise_params__(self, key):
-        if self.value is not None:
-            return {"value": self.value}
-        else:
-            return {"value": jnp.array(0.0)}
-
-    def __get_bijectors__(self):
-        return {"value": tfb.Identity()}
+    def set_params(self, params):
+        pass

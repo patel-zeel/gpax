@@ -1,26 +1,31 @@
+**Disclaimer: Some of the following information also includes future features that are not yet implemented. Some information might also be outdated.**
+
+## Quick notes
+Define `jnp.jitter=<reasonable value>` in the beginning of your code, it is used everywhere in the library. The default value is 1e-6.
+
 ## GP
 
 ### ExactGP
-1. It is most simple vanilla GP regression class. It takes the following arguments:
+1. It is the vanilla GP regression class. It takes the following arguments:
 - `kernel`: the kernel to use (default: `RBFKernel`)
 - `noise`: the noise to use (default: `HomoskedasticNoise`)
-- `mean`: the mean to use (default: `ConstantMean`)
+- `mean`: the mean to use (default: `ScalarMean`)
 
-2. `initialise_params(key, X, X_inducing)` method initialises the parameters of the model. `X` is passed to infer the dimensionality of X for kernel e.g. if `X` is (5, 3) and ARD is true, kernel lengthscale will be initialized of shape (3,). `X_inducing` is optional argument and it is only used when using `GibbsKernel` and/or `HeteroScedasticNoise`.
+2. `initialize_params(key, X, X_inducing)` method initializes the parameters of the model. `X` is passed to infer the dimensionality of X for kernel e.g. if `X` is (5, 3) and ARD is true, kernel lengthscale will be initialized of shape (3,). `X_inducing` is optional argument and it is only used when using `GibbsKernel` and/or `HeteroScedasticNoise`.
 
-### SparseGP
+### SparseGP (WIP)
 1. It is a sparse GP regression class. It takes all the arguments of `ExactGP` and the following additional arguments:
 - `method` - the sparse gp method to be used (default: `vfe`, other options: `dtc`, `fitc`)
 
-2. `initialise_params(key, X, X_inducing)` method initialises the parameters of the model. `X_inducing` is a mandatory argument and it is used to initialize the inducing points.
+2. `initialize_params(key, X, X_inducing)` method initializes the parameters of the model. `X_inducing` is a mandatory argument and it is used to initialize the inducing points.
 
 ## Kernels
 
 1. This library implements the following common kernels: `RBFKernel`, `Matern12Kernel`, `Matern32Kernel`, `Matern52Kernel`, `LinearKernel` and a special kernel `GibbsKernel`. Apart from these, `SumKernel` and `ProductKernel` are also implemented which can be used to combine kernels.
 
-2. All of them accept their parameter at initialization time or they will initialize parameters to default values. 
+2. All of them accept their parameter at initialization time or they will initialize parameters to random values based on priors and PRNG key.
 
-3. `initialise_params(key, X, X_inducing)` method initialises the parameters of the kernel. In some cases, `X` is needed and in other `X_inducing` but sometimes both might also be needed. In detail
+3. `initialize_params(key, X, X_inducing)` method initializes the parameters of the kernel. In some cases, `X` is needed and in other `X_inducing` but sometimes both might also be needed. In detail
 - `X` is needed when initializing all kernels except `GibbsKernel`
 - `X_inducing` is needed when initializing `GibbsKernel`
 - Both `X` and `X_inducing` are needed when initializing a `SumKernel` or `ProductKernel` because they may contain `GibbsKernel` as one of their components.
@@ -43,13 +48,13 @@
 ### HomoskedasticNoise
 
 1. It is the most simple noise model. It takes the following arguments:
-- `variance`: The variance of the noise. Default: `1.0`
+- `variance`: The variance of the noise.
 
 ### HeteroskedasticNoise
 
 1. It is a heteroskedastic noise model. It takes the following arguments:
 
-- `latent_log_noise`: The latent log noise to be used with size of inducing points. Default is zeros. 
+- `latent_log_noise`: The latent log noise to be used with size of inducing points.
 - `X_inducing`: The inducing points to be used.
 - `use_kernel_inducing`: If `True`, then `X_inducing` is used from the kernel which must be `GibbsKernel`. Default: `True`.
 
@@ -87,7 +92,7 @@ noise = HeteroscedasticNoise()
 kernel = GibbsKernel()
 noise = HeteroscedasticNoise(use_kernel_inducing=False)
 gp = SparseGP(kernel=kernel, noise=noise)
-params = gp.initialise_params(key, X=X, X_inducing=X_inducing)
+params = gp.initialize_params(key, X=X, X_inducing=X_inducing)
 ```
 
 ### If your model is SparseGP and you want to learn `X_inducing` separately for `SparseGP` and jointly for `GibbsKernel` and `HeteroscedasticNoise`.
@@ -95,5 +100,5 @@ params = gp.initialise_params(key, X=X, X_inducing=X_inducing)
 kernel = GibbsKernel(X_inducing=X_inducing)
 noise = HeteroscedasticNoise(use_kernel_inducing=True)
 gp = SparseGP(kernel=kernel, noise=noise)
-params = gp.initialise_params(key, X=X, X_inducing=X_inducing)
+params = gp.initialize_params(key, X=X, X_inducing=X_inducing)
 ```
