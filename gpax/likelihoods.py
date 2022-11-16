@@ -55,6 +55,13 @@ class HeteroscedasticGaussian(Likelihood):
         white_bijector = gb.White(mean=self.latent_gp.mean, kernel_fn=self.latent_gp.kernel)
         self.scale = Parameter(self.scale, white_bijector, self.scale_prior)
 
+    def get_X_inducing(self):
+        if "X_inducing" in self.common_params:
+            return self.common_params["X_inducing"]
+        else:
+            assert isinstance(self.X_inducing, Parameter)
+            return self.X_inducing
+
     def __get_params__(self):
         params = {"latent_gp": self.latent_gp.__get_params__(), "scale": self.scale}
         if "X_inducing" not in self.common_params and self.X_inducing is not None:
@@ -65,16 +72,9 @@ class HeteroscedasticGaussian(Likelihood):
 
         return params
 
-    def get_X_inducing(self):
-        if "X_inducing" in self.common_params:
-            return self.common_params["X_inducing"]
-        else:
-            assert isinstance(self.X_inducing, Parameter)
-            return self.X_inducing
-
     def set_params(self, params):
         self.latent_gp.set_params(params["latent_gp"])
-        self.whitened_raw_variance.set(params["whitened_raw_variance"])
+        self.scale.set(params["scale"])
         if self.X_inducing is not None:
             self.X_inducing.set(params["X_inducing"])
 

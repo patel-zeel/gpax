@@ -33,7 +33,10 @@ class TransformedDistribution(Distribution):
         return self.bijector(self.distribution.sample(seed, sample_shape))
 
     def log_prob(self, value):
-        return self.distribution.log_prob(self.bijector.inverse(value)) + self.bijector.inverse_log_jacobian(value)
+        log_prob = self.distribution.log_prob(self.bijector.inverse(value))
+        if isinstance(self, (NoPrior, Fixed)):
+            return log_prob
+        return log_prob + self.bijector.inverse_log_jacobian(value)
 
 
 class NoPrior(Distribution):

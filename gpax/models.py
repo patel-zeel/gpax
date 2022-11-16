@@ -9,12 +9,13 @@ from gpax.core import Module, Parameter
 from gpax.defaults import get_default_jitter
 import gpax.distributions as gd
 import gpax.bijectors as gb
-from gpax.utils import add_to_diagonal, get_a_inv_b
+from gpax.utils import add_to_diagonal, get_a_inv_b, train_fn
 
 from jaxtyping import Array
 from typing import TYPE_CHECKING
 
 from chex import dataclass
+from copy import deepcopy
 
 if TYPE_CHECKING:
     from gpax.kernels import Kernel
@@ -79,6 +80,31 @@ class ExactGPRegression(Model):
         )
 
         return log_likelihood
+
+    def optimize(self, key, optimizer, X, y, n_iters, include_prior=True, lax_scan=True):
+        self.initialize(key)
+        self.unconstrain()
+        raw_params = self.get_params()
+
+        def loss_fn(raw_params):
+            model = deepcopy(self)
+            model.unconstrain()
+            model.set_params(raw_params)
+
+            # Prior should be computed before constraining the parameters
+            log_prior = 0.0
+            if include_prior:
+                log_prior = model.log_prior()
+
+            model.constrain()
+            log_prob = model.log_probability(X, y)
+            return -log_prob - log_prior
+
+        result = train_fn(loss_fn, raw_params, optimizer, n_iters, lax_scan=lax_scan)
+        self.unconstrain()
+        self.set_params(result["raw_params"])
+        self.constrain()
+        return result
 
     def condition(self, X, y):
         """

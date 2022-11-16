@@ -46,7 +46,7 @@ class Parameter:
             self._value = self._prior.sample(key, self._value.shape)
 
     def log_prior(self):
-        self._prior.log_prob(self._value)
+        return self._prior.log_prob(self._value)
 
 
 @dataclass
@@ -61,13 +61,15 @@ class Module:
             return params
 
     def constrain(self):
-        assert self.constrained is False, "This module is already constrained."
+        if self.constrained is True:
+            return
         params = self.get_params(raw_dict=False)
-        jtu.tree_map(lambda x: x.constrain(), params, is_leaf=is_parameter)
+        jtu.tree_map(lambda param: param.constrain(), params, is_leaf=is_parameter)
         self.constrained = True
 
     def unconstrain(self):
-        assert self.constrained is True, "This module is already unconstrained."
+        if self.constrained is False:
+            return
         params = self.get_params(raw_dict=False)
         jtu.tree_map(lambda param: param.unconstrain(), params, is_leaf=is_parameter)
         self.constrained = False

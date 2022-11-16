@@ -23,13 +23,31 @@ NEAR_ZERO = 1e-10
 
 
 def invert_bijector(bijector):
-    bijector = deepcopy(bijector)
-    bijector.forward_fn, bijector.inverse_fn = bijector.inverse_fn, bijector.forward_fn
-    return bijector
+    pairs = {
+        Exp: Log,
+        Softplus: InvSoftplus,
+        Sigmoid: Logit,
+        White: InvWhite,
+        SquarePlus: InvSquarePlus,
+        Identity: Identity,
+    }
+    reverse_pairs = {v: k for k, v in pairs.items()}
+    all_pairs = {**pairs, **reverse_pairs}
+
+    inversed_bijector = all_pairs[type(bijector)]()
+    if isinstance(inversed_bijector, (White, InvWhite)):
+        inversed_bijector.X_inducing = bijector.X_inducing
+        inversed_bijector.mean = bijector.mean
+        inversed_bijector.kernel_fn = bijector.kernel_fn
+
+    return inversed_bijector
 
 
 class Bijector:
     def __call__(self, ele):
+        if isinstance(ele, TransformedDistribution):
+            if type(ele.bijector) is type(invert_bijector(self)):
+                return ele.distribution
         if isinstance(ele, Distribution):
             return TransformedDistribution(distribution=ele, bijector=self)
         else:
@@ -39,6 +57,9 @@ class Bijector:
         return self(ele)
 
     def inverse(self, ele):
+        if isinstance(ele, TransformedDistribution):
+            if type(ele.bijector) is type(invert_bijector(self)):
+                return ele.distribution
         if isinstance(ele, Distribution):
             return TransformedDistribution(distribution=ele, bijector=invert_bijector(self))
         else:
@@ -88,6 +109,16 @@ class Sigmoid(Bijector):
 
 
 @dataclass
+class Logit(Bijector):
+    forward_fn: callable = jsp.special.logit
+    inverse_fn: callable = jax.nn.sigmoid
+    in_upper: float = 1.0
+    in_lower: float = 0.0
+    out_upper: float = jnp.inf
+    out_lower: float = -jnp.inf
+
+
+@dataclass
 class Identity(Bijector):
     forward_fn: callable = lambda x: x
     inverse_fn: callable = lambda x: x
@@ -108,6 +139,16 @@ class SquarePlus(Bijector):
 
 
 @dataclass
+class InvSquarePlus(Bijector):
+    forward_fn: callable = lambda x: 1 / (x - 1 / x)
+    inverse_fn: callable = lambda x: 0.5 * (x + jnp.sqrt(jnp.square(x) + 4.0))
+    in_upper: float = jnp.inf
+    in_lower: float = 0.0
+    out_upper: float = jnp.inf
+    out_lower: float = -jnp.inf
+
+
+@dataclass
 class Softplus(Bijector):
     forward_fn: callable = jax.nn.softplus
     inverse_fn: callable = lambda x: jnp.log(jnp.exp(x) - 1)
@@ -118,35 +159,62 @@ class Softplus(Bijector):
 
 
 @dataclass
+class InvSoftplus(Bijector):
+    forward_fn: callable = lambda x: jnp.log(jnp.exp(x) - 1)
+    inverse_fn: callable = jax.nn.softplus
+    in_upper: float = jnp.inf
+    in_lower: float = 0.0
+    out_upper: float = jnp.inf
+    out_lower: float = -jnp.inf
+
+
+def white_forward_fn(self, white_value):
+    positive_bijector = get_positive_bijector()
+    X_inducing = self.X_inducing()
+    mean = self.mean()
+    covariance = self.kernel_fn(X_inducing, X_inducing)
+    stable_covariance = add_to_diagonal(covariance, 0.0, get_default_jitter())
+    cholesky = jnp.linalg.cholesky(stable_covariance)
+    raw_value = cholesky @ white_value + mean
+    return positive_bijector(raw_value)
+
+
+def white_inverse_fn(self, value):
+    positive_bijector = get_positive_bijector()
+    X_inducing = self.X_inducing()
+    mean = self.mean()
+
+    value = repeat_to_size(value, X_inducing.shape[0])
+    raw_value = positive_bijector.inverse(value)
+    covariance = self.kernel_fn(X_inducing, X_inducing)
+    stable_covariance = add_to_diagonal(covariance, 0.0, get_default_jitter())
+    cholesky = jnp.linalg.cholesky(stable_covariance)
+
+    raw_value_bar = raw_value - mean
+    white_value = jsp.linalg.solve_triangular(cholesky, raw_value_bar, lower=True)
+    return white_value
+
+
+@dataclass
 class White(Bijector):
     kernel_fn: callable = None
     X_inducing: Parameter = None
     mean: Mean = None
 
-    def forward_fn(self, white_value):
-        positive_bijector = get_positive_bijector()
-        X_inducing = self.X_inducing()
-        mean = self.mean()
-        covariance = self.kernel_fn(X_inducing, X_inducing)
-        stable_covariance = add_to_diagonal(covariance, 0.0, get_default_jitter())
-        cholesky = jnp.linalg.cholesky(stable_covariance)
-        raw_value = cholesky @ white_value + mean
-        return positive_bijector(raw_value)
+    def __post_init__(self):
+        self.forward_fn = lambda x: white_forward_fn(self, x)
+        self.inverse_fn = lambda x: white_inverse_fn(self, x)
 
-    def inverse_fn(self, value):
-        positive_bijector = get_positive_bijector()
-        X_inducing = self.X_inducing()
-        mean = self.mean()
 
-        value = repeat_to_size(value, X_inducing.shape[0])
-        raw_value = positive_bijector.inverse(value)
-        covariance = self.kernel_fn(X_inducing, X_inducing)
-        stable_covariance = add_to_diagonal(covariance, 0.0, get_default_jitter())
-        cholesky = jnp.linalg.cholesky(stable_covariance)
+@dataclass
+class InvWhite(Bijector):
+    kernel_fn: callable = None
+    X_inducing: Parameter = None
+    mean: Mean = None
 
-        raw_value_bar = raw_value - mean
-        white_value = jsp.linalg.solve_triangular(cholesky, raw_value_bar, lower=True)
-        return white_value
+    def __post_init__(self):
+        self.forward_fn = lambda x: white_inverse_fn(self, x)
+        self.inverse_fn = lambda x: white_forward_fn(self, x)
 
 
 all_bijectors = {

@@ -44,7 +44,7 @@ def distance(X1, X2):
     return jnp.sqrt(squared_distance(X1, X2))
 
 
-def train_fn(loss_fn, init_raw_params, optimizer, num_epochs=1, lax_scan=True):
+def train_fn(loss_fn, init_raw_params, optimizer, n_iters=1, lax_scan=True):
     state = optimizer.init(init_raw_params)
 
     # dry run
@@ -61,14 +61,14 @@ def train_fn(loss_fn, init_raw_params, optimizer, num_epochs=1, lax_scan=True):
             return (raw_params, state), (raw_params, loss)
 
         (raw_params, state), (raw_params_history, loss_history) = jax.lax.scan(
-            f=step, init=(init_raw_params, state), xs=None, length=num_epochs
+            f=step, init=(init_raw_params, state), xs=None, length=n_iters
         )
     else:
         raw_params_history = []
         loss_history = []
         raw_params = init_raw_params
         grad_fn = jax.grad(loss_fn)
-        for _ in range(num_epochs):
+        for _ in range(n_iters):
             loss = loss_fn(raw_params)
             grads = grad_fn(raw_params)
             updates, state = optimizer.update(grads, state)
@@ -76,7 +76,6 @@ def train_fn(loss_fn, init_raw_params, optimizer, num_epochs=1, lax_scan=True):
             raw_params_history.append(raw_params)
             loss_history.append(loss)
         loss_history = jnp.array(loss_history)
-        raw_params_history = jnp.array(raw_params_history)
     return {
         "raw_params": raw_params,
         "raw_params_history": raw_params_history,
