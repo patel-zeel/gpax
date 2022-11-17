@@ -14,7 +14,7 @@ is_parameter = lambda x: isinstance(x, Parameter)
 class Parameter:
     def __init__(self, value: Any, bijector: gb.Bijector = None, prior: gd.Distribution = None, fixed_init=False):
         self.fixed_init = fixed_init
-        self._raw_value = jnp.asarray(value)
+        self._value = jnp.asarray(value)
         if bijector is None:
             self._bijector = gb.get_default_bijector()
         else:
