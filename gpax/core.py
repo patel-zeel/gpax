@@ -8,22 +8,18 @@ from chex import dataclass
 
 from typing import Any
 
-from gpax.bijectors import get_default_bijector
-
 is_parameter = lambda x: isinstance(x, Parameter)
 
 # Core classes
 class Parameter:
-    def __init__(self, value: Any, bijector: gb.Bijector = None, prior: gd.Distribution = None):
+    def __init__(self, value: Any, bijector: gb.Bijector = None, prior: gd.Distribution = None, fixed_init=False):
+        self.fixed_init = fixed_init
         self._value = jnp.asarray(value)
         if bijector is None:
-            self._bijector = get_default_bijector()
+            self._bijector = gb.get_default_bijector()
         else:
             self._bijector = bijector
-        if prior is None:
-            self._prior = self._bijector(gd.NoPrior())
-        else:
-            self._prior = prior
+        self._prior = prior
 
     def __call__(self):
         return self._value
@@ -40,9 +36,10 @@ class Parameter:
         self._prior = self._bijector.forward(self._prior)
 
     def initialize(self, key):
-        if isinstance(self._prior, gd.Fixed):
+        if self.fixed_init:
             pass
-        else:
+        elif self._prior is None:
+
             self._value = self._prior.sample(key, self._value.shape)
 
     def log_prior(self):

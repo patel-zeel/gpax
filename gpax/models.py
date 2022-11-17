@@ -88,15 +88,14 @@ class ExactGPRegression(Model):
 
         def loss_fn(raw_params):
             model = deepcopy(self)
-            model.unconstrain()
+            model.unconstrain()  # Model must be in unconstrained state before setting params
             model.set_params(raw_params)
+            model.constrain()
 
-            # Prior should be computed before constraining the parameters
             log_prior = 0.0
             if include_prior:
                 log_prior = model.log_prior()
 
-            model.constrain()
             log_prob = model.log_probability(X, y)
             return -log_prob - log_prior
 

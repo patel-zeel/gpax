@@ -34,7 +34,10 @@ class TransformedDistribution(Distribution):
 
     def log_prob(self, value):
         log_prob = self.distribution.log_prob(self.bijector.inverse(value))
-        if isinstance(self, (NoPrior, Fixed)):
+        base = self
+        while isinstance(base, TransformedDistribution):
+            base = base.distribution
+        if isinstance(base, (NoPrior, Fixed)):
             return log_prob
         return log_prob + self.bijector.inverse_log_jacobian(value)
 

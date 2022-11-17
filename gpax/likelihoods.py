@@ -9,6 +9,7 @@ import gpax.distributions as gd
 import gpax.bijectors as gb
 
 from gpax.core import Module
+from gpax.utils import repeat_to_size
 
 
 @dataclass
@@ -42,8 +43,8 @@ class Gaussian(Likelihood):
 class HeteroscedasticGaussian(Likelihood):
     latent_gp: Model = None
     X_inducing: Array = None
-    scale: float = 1.0
-    scale_prior: gd.Distribution = field(default_factory=lambda: gb.get_positive_bijector()(gd.Normal()))
+    scale_inducing: float = 1.0
+    scale_inducing_prior: gd.Distribution = field(default_factory=lambda: gb.InvWhite()(gd.Normal()))
     type: str = "gp_neurips"
 
     def __post_init__(self):
@@ -53,7 +54,9 @@ class HeteroscedasticGaussian(Likelihood):
             self.X_inducing = Parameter(self.X_inducing, gb.get_default_bijector(), gd.Fixed())
 
         white_bijector = gb.White(mean=self.latent_gp.mean, kernel_fn=self.latent_gp.kernel)
-        self.scale = Parameter(self.scale, white_bijector, self.scale_prior)
+        self.scale_inducing_prior.bijector.mean = self.latent_gp.mean
+        self.scale_inducing_prior.bijector.kernel_fn = self.latent_gp.kernel
+        self.scale_inducing = Parameter(self.scale_inducing, white_bijector, self.scale_inducing_prior)
 
     def get_X_inducing(self):
         if "X_inducing" in self.common_params:
@@ -63,27 +66,32 @@ class HeteroscedasticGaussian(Likelihood):
             return self.X_inducing
 
     def __get_params__(self):
-        params = {"latent_gp": self.latent_gp.__get_params__(), "scale": self.scale}
+        params = {"latent_gp": self.latent_gp.__get_params__(), "scale_inducing": self.scale_inducing}
         if "X_inducing" not in self.common_params and self.X_inducing is not None:
             params["X_inducing"] = self.X_inducing
 
-        # This is a hack to assign X_inducing to the bijector. Not a good practice in general.
-        self.scale._bijector.X_inducing = self.get_X_inducing()
+        # This is a special hack to assign X_inducing to the White bijector. Not a good practice in general.
+        X_inducing = self.get_X_inducing()
+        self.scale_inducing.set(repeat_to_size(self.scale_inducing(), X_inducing().shape[0]))
+        if isinstance(self.scale_inducing._bijector, (gb.White, gb.InvWhite)):
+            self.scale_inducing._bijector.X_inducing = X_inducing
+        if isinstance(self.scale_inducing._prior, gd.TransformedDistribution):
+            self.scale_inducing._prior.bijector.X_inducing = X_inducing
 
         return params
 
     def set_params(self, params):
         self.latent_gp.set_params(params["latent_gp"])
-        self.scale.set(params["scale"])
+        self.scale_inducing.set(params["scale_inducing"])
         if self.X_inducing is not None:
             self.X_inducing.set(params["X_inducing"])
 
     def __call__(self, X):
         if self.type == "gp_neurips":
             X_inducing = self.get_X_inducing()()
-            inducing_scale = self.scale()
-            scale_X = self.latent_gp.predict(X_inducing, inducing_scale, X, include_noise=False, return_cov=False)
-            return scale_X
+            scale_inducing = self.scale_inducing()
+            scale = self.latent_gp.predict(X_inducing, scale_inducing, X, include_noise=False, return_cov=False)
+            return scale
         else:
             raise NotImplementedError(f"{self.prior_type=} is not implemented.")
 

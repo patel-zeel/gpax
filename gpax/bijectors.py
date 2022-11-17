@@ -45,10 +45,14 @@ def invert_bijector(bijector):
 
 class Bijector:
     def __call__(self, ele):
-        if isinstance(ele, TransformedDistribution):
+        if ele is None:
+            return None
+        elif isinstance(ele, TransformedDistribution):
             if type(ele.bijector) is type(invert_bijector(self)):
                 return ele.distribution
-        if isinstance(ele, Distribution):
+            else:
+                return TransformedDistribution(distribution=ele, bijector=self)
+        elif isinstance(ele, Distribution):
             return TransformedDistribution(distribution=ele, bijector=self)
         else:
             return self.forward_fn(ele)
@@ -57,10 +61,12 @@ class Bijector:
         return self(ele)
 
     def inverse(self, ele):
-        if isinstance(ele, TransformedDistribution):
+        if ele is None:
+            return None
+        elif isinstance(ele, TransformedDistribution):
             if type(ele.bijector) is type(invert_bijector(self)):
                 return ele.distribution
-        if isinstance(ele, Distribution):
+        elif isinstance(ele, Distribution):
             return TransformedDistribution(distribution=ele, bijector=invert_bijector(self))
         else:
             return self.inverse_fn(ele)
@@ -168,18 +174,7 @@ class InvSoftplus(Bijector):
     out_lower: float = -jnp.inf
 
 
-def white_forward_fn(self, white_value):
-    positive_bijector = get_positive_bijector()
-    X_inducing = self.X_inducing()
-    mean = self.mean()
-    covariance = self.kernel_fn(X_inducing, X_inducing)
-    stable_covariance = add_to_diagonal(covariance, 0.0, get_default_jitter())
-    cholesky = jnp.linalg.cholesky(stable_covariance)
-    raw_value = cholesky @ white_value + mean
-    return positive_bijector(raw_value)
-
-
-def white_inverse_fn(self, value):
+def white_forward_fn(self, value):
     positive_bijector = get_positive_bijector()
     X_inducing = self.X_inducing()
     mean = self.mean()
@@ -193,6 +188,18 @@ def white_inverse_fn(self, value):
     raw_value_bar = raw_value - mean
     white_value = jsp.linalg.solve_triangular(cholesky, raw_value_bar, lower=True)
     return white_value
+
+
+def white_inverse_fn(self, white_value):
+    positive_bijector = get_positive_bijector()
+    X_inducing = self.X_inducing()
+    mean = self.mean()
+    covariance = self.kernel_fn(X_inducing, X_inducing)
+    stable_covariance = add_to_diagonal(covariance, 0.0, get_default_jitter())
+    cholesky = jnp.linalg.cholesky(stable_covariance)
+    white_value = repeat_to_size(white_value, X_inducing.shape[0])
+    raw_value = cholesky @ white_value + mean
+    return positive_bijector(raw_value)
 
 
 @dataclass
@@ -221,9 +228,11 @@ all_bijectors = {
     "Log": Log,
     "Exp": Exp,
     "Sigmoid": Sigmoid,
+    "Logit": Logit,
     "Identity": Identity,
     "SquarePlus": SquarePlus,
     "Softplus": Softplus,
+    "White": White,
 }
 
 
