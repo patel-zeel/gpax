@@ -39,7 +39,7 @@ class ExactGPRegression(Model):
         assert self.likelihood is not None, "likelihood must be provided"
         assert self.mean is not None, "mean must be provided"
         if self.X_inducing is not None:
-            X_inducing = Parameter(self.X_inducing, prior=gd.Fixed())
+            X_inducing = Parameter(self.X_inducing, fixed_init=True)
             self.common_params = {"X_inducing": X_inducing}
             self.kernel.common_params = self.common_params
             self.likelihood.common_params = self.common_params
@@ -88,15 +88,14 @@ class ExactGPRegression(Model):
 
         def loss_fn(raw_params):
             model = deepcopy(self)
-            model.unconstrain()
+            model.unconstrain()  # Model must be in unconstrained state before setting params
             model.set_params(raw_params)
+            model.constrain()
 
-            # Prior should be computed before constraining the parameters
             log_prior = 0.0
             if include_prior:
                 log_prior = model.log_prior()
 
-            model.constrain()
             log_prob = model.log_probability(X, y)
             return -log_prob - log_prior
 

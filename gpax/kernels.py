@@ -48,6 +48,7 @@ class SubKernel(Kernel):
 
     def __post_init__(self):
         if self.active_dims is None:
+            assert self.input_dim is not None, "input_dim must be specified if active_dims is None"
             self.active_dims = list(range(self.input_dim))
         if self.input_dim is None:
             self.input_dim = len(self.active_dims)
@@ -79,8 +80,8 @@ class Smooth(SubKernel):
             lengthscale = jnp.asarray(self.lengthscale).squeeze()
             assert lengthscale.shape == (), "lengthscale must be a scalar when ARD=False."
 
-        self.lengthscale = Parameter(lengthscale, prior=self.lengthscale_prior)
-        self.scale = Parameter(self.scale, prior=self.scale_prior)
+        self.lengthscale = Parameter(lengthscale, bijector=gb.get_positive_bijector(), prior=self.lengthscale_prior)
+        self.scale = Parameter(self.scale, bijector=gb.get_positive_bijector(), prior=self.scale_prior)
 
     def call(self, X1, X2):
         kernel_fn = self.call_on_a_pair
@@ -150,10 +151,11 @@ class Matern52(Smooth):
 class Polynomial(SubKernel):
     order: float = 1.0
     center: float = 0.0
+    center_prior: gd.Distribution = None
 
     def __post_init__(self):
         super(Polynomial, self).__post_init__()
-        self.center = Parameter(self.center, bijector=gb.get_positive_bijector())
+        self.center = Parameter(self.center, bijector=gb.get_positive_bijector(), prior=self.center_prior)
 
     def call(self, X1, X2):
         return (X1 @ X2.T + self.center()) ** self.order
