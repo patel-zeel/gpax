@@ -34,33 +34,7 @@ class TransformedDistribution(Distribution):
 
     def log_prob(self, value):
         log_prob = self.distribution.log_prob(self.bijector.inverse(value))
-        base = self
-        while isinstance(base, TransformedDistribution):
-            base = base.distribution
-        if isinstance(base, (NoPrior, Fixed)):
-            return log_prob
         return log_prob + self.bijector.inverse_log_jacobian(value)
-
-
-class NoPrior(Distribution):
-    """
-    Prior for MLE parameter estimation.
-    """
-
-    def sample(self, seed, sample_shape):
-        return Normal(loc=0.0, scale=1.0).sample(seed, sample_shape)
-
-    def log_prob(self, value):
-        return jnp.zeros(value.shape)
-
-
-class Fixed(Distribution):
-    """
-    Prior for non-reinitializable parameters e.g. X_inducing.
-    """
-
-    def log_prob(self, value):
-        return jnp.zeros(value.shape)
 
 
 @dataclass

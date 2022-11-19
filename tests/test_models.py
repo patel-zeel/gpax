@@ -6,6 +6,7 @@ import pytest
 
 import jax
 import jax.numpy as jnp
+import jax.tree_util as jtu
 from gpax.models import ExactGPRegression
 from gpax.kernels import RBF
 from gpax.likelihoods import Gaussian
@@ -49,26 +50,21 @@ def test_exact_gp(key, kernel):
     gp.initialize(key)
     log_prob = gp.log_probability(X, y)
 
-    params = gp.get_params()
-    assert jnp.allclose(log_prob, stheno_log_prob(params))
+    params = gp.get_constrained_params()
+    assert jnp.allclose(log_prob, stheno_log_prob(params), atol=1e-4)
 
     # jittable
     def neg_log_prob(raw_params):
         gp = ExactGPRegression(kernel=kernel(input_dim=X.shape[1]), likelihood=Gaussian(), mean=Scalar())
-        gp.unconstrain()
         gp.set_params(raw_params)
-        gp.constrain()
         return -gp.log_probability(X, y)
 
     def neg_log_prob_stheno(raw_params):
         gp = ExactGPRegression(kernel=kernel(input_dim=X.shape[1]), likelihood=Gaussian(), mean=Scalar())
-        gp.unconstrain()
         gp.set_params(raw_params)
-        gp.constrain()
-        params = gp.get_params()
+        params = gp.get_constrained_params()
         return -stheno_log_prob(params)
 
-    gp.unconstrain()
     raw_params = gp.get_params()
     grads = jax.jit(jax.grad(neg_log_prob))(raw_params)
     grads_stheno = jax.jit(jax.grad(neg_log_prob_stheno))(raw_params)

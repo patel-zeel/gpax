@@ -17,30 +17,12 @@ from chex import dataclass
 import inspect
 
 if TYPE_CHECKING:
-    from gpax.core import Parameter, Mean
-
-NEAR_ZERO = 1e-10
+    from gpax.core import Parameter
+    from gpax.models import Model
 
 
 def invert_bijector(bijector):
-    pairs = {
-        Exp: Log,
-        Softplus: InvSoftplus,
-        Sigmoid: Logit,
-        White: InvWhite,
-        SquarePlus: InvSquarePlus,
-        Identity: Identity,
-    }
-    reverse_pairs = {v: k for k, v in pairs.items()}
-    all_pairs = {**pairs, **reverse_pairs}
-
-    inversed_bijector = all_pairs[type(bijector)]()
-    if isinstance(inversed_bijector, (White, InvWhite)):
-        inversed_bijector.X_inducing = bijector.X_inducing
-        inversed_bijector.mean = bijector.mean
-        inversed_bijector.kernel_fn = bijector.kernel_fn
-
-    return inversed_bijector
+    return bijector_pairs[bijector.__class__]()
 
 
 class Bijector:
@@ -48,14 +30,14 @@ class Bijector:
         if ele is None:
             return None
         elif isinstance(ele, TransformedDistribution):
-            if type(ele.bijector) is type(invert_bijector(self)):
+            if bijector_pairs[type(ele.bijector)] is type(self):
                 return ele.distribution
             else:
                 return TransformedDistribution(distribution=ele, bijector=self)
         elif isinstance(ele, Distribution):
             return TransformedDistribution(distribution=ele, bijector=self)
         else:
-            return self.forward_fn(ele)
+            return self._forward_fn(ele)
 
     def forward(self, ele):
         return self(ele)
@@ -64,12 +46,12 @@ class Bijector:
         if ele is None:
             return None
         elif isinstance(ele, TransformedDistribution):
-            if type(ele.bijector) is type(invert_bijector(self)):
+            if type(ele.bijector) is type(self):
                 return ele.distribution
         elif isinstance(ele, Distribution):
             return TransformedDistribution(distribution=ele, bijector=invert_bijector(self))
         else:
-            return self.inverse_fn(ele)
+            return self._inverse_fn(ele)
 
     def log_jacobian(self, value):
         def _log_jacobian(value):
@@ -83,105 +65,131 @@ class Bijector:
 
         return vectorized_fn(_inverse_log_jacobian, array, array.shape)
 
+    def in_limits(self):
+        return (self._in_lower, self._in_upper)
 
-@dataclass
-class Log(Bijector):
-    forward_fn: callable = jnp.log
-    inverse_fn: callable = jnp.exp
-    in_upper: float = jnp.inf
-    in_lower: float = NEAR_ZERO
-    out_upper: float = jnp.inf
-    out_lower: float = -jnp.inf
+    def out_limits(self):
+        return (self._out_lower, self._out_upper)
 
 
 @dataclass
 class Exp(Bijector):
-    forward_fn: callable = jnp.exp
-    inverse_fn: callable = jnp.log
-    in_upper: float = jnp.inf
-    in_lower: float = -jnp.inf
-    out_upper: float = jnp.inf
-    out_lower: float = 0.0
+    _forward_fn: callable = jnp.exp
+    _inverse_fn: callable = jnp.log
+    _in_upper: float = jnp.inf
+    _in_lower: float = -jnp.inf
+    _out_upper: float = jnp.inf
+    _out_lower: float = 0.0
+
+
+@dataclass
+class Log(Bijector):
+    _forward_fn: callable = jnp.log
+    _inverse_fn: callable = jnp.exp
+    _in_upper: float = jnp.inf
+    _in_lower: float = 0.0
+    _out_upper: float = jnp.inf
+    _out_lower: float = -jnp.inf
 
 
 @dataclass
 class Sigmoid(Bijector):
-    forward_fn: callable = jax.nn.sigmoid
-    inverse_fn: callable = jsp.special.logit
-    in_upper: float = jnp.inf
-    in_lower: float = -jnp.inf
-    out_upper: float = 1.0
-    out_lower: float = 0.0
+    _forward_fn: callable = jax.nn.sigmoid
+    _inverse_fn: callable = jsp.special.logit
+    _in_upper: float = jnp.inf
+    _in_lower: float = -jnp.inf
+    _out_upper: float = 1.0
+    _out_lower: float = 0.0
 
 
 @dataclass
 class Logit(Bijector):
-    forward_fn: callable = jsp.special.logit
-    inverse_fn: callable = jax.nn.sigmoid
-    in_upper: float = 1.0
-    in_lower: float = 0.0
-    out_upper: float = jnp.inf
-    out_lower: float = -jnp.inf
+    _forward_fn: callable = jsp.special.logit
+    _inverse_fn: callable = jax.nn.sigmoid
+    _in_upper: float = 1.0
+    _in_lower: float = 0.0
+    _out_upper: float = jnp.inf
+    _out_lower: float = -jnp.inf
 
 
 @dataclass
 class Identity(Bijector):
-    forward_fn: callable = lambda x: x
-    inverse_fn: callable = lambda x: x
-    in_upper: float = jnp.inf
-    in_lower: float = -jnp.inf
-    out_upper: float = jnp.inf
-    out_lower: float = -jnp.inf
+    _forward_fn: callable = lambda x: x
+    _inverse_fn: callable = lambda x: x
+    _in_upper: float = jnp.inf
+    _in_lower: float = -jnp.inf
+    _out_upper: float = jnp.inf
+    _out_lower: float = -jnp.inf
+
+
+@dataclass
+class Square(Bijector):
+    _forward_fn: callable = jnp.square
+    _inverse_fn: callable = jnp.sqrt
+    _in_upper: float = jnp.inf
+    _in_lower: float = -jnp.inf
+    _out_upper: float = jnp.inf
+    _out_lower: float = 0.0
+
+
+@dataclass
+class Sqrt(Bijector):
+    _forward_fn: callable = jnp.sqrt
+    _inverse_fn: callable = jnp.square
+    _in_upper: float = jnp.inf
+    _in_lower: float = 0.0
+    _out_upper: float = jnp.inf
+    _out_lower: float = 0.0
 
 
 @dataclass
 class SquarePlus(Bijector):
-    forward_fn: callable = lambda x: 0.5 * (x + jnp.sqrt(jnp.square(x) + 4.0))
-    inverse_fn: callable = lambda x: x - 1 / x
-    in_upper: float = jnp.inf
-    in_lower: float = -jnp.inf
-    out_upper: float = jnp.inf
-    out_lower: float = 0.0
+    _forward_fn: callable = lambda x: 0.5 * (x + jnp.sqrt(jnp.square(x) + 4.0))
+    _inverse_fn: callable = lambda x: x - 1 / x
+    _in_upper: float = jnp.inf
+    _in_lower: float = -jnp.inf
+    _out_upper: float = jnp.inf
+    _out_lower: float = 0.0
 
 
 @dataclass
-class InvSquarePlus(Bijector):
-    forward_fn: callable = lambda x: 1 / (x - 1 / x)
-    inverse_fn: callable = lambda x: 0.5 * (x + jnp.sqrt(jnp.square(x) + 4.0))
-    in_upper: float = jnp.inf
-    in_lower: float = 0.0
-    out_upper: float = jnp.inf
-    out_lower: float = -jnp.inf
+class InverseSquarePlus(Bijector):
+    _forward_fn: callable = lambda x: x - 1 / x
+    _inverse_fn: callable = lambda x: 0.5 * (x + jnp.sqrt(jnp.square(x) + 4.0))
+    _in_upper: float = jnp.inf
+    _in_lower: float = 0.0
+    _out_upper: float = jnp.inf
+    _out_lower: float = -jnp.inf
 
 
 @dataclass
 class Softplus(Bijector):
-    forward_fn: callable = jax.nn.softplus
-    inverse_fn: callable = lambda x: jnp.log(jnp.exp(x) - 1)
-    in_upper: float = jnp.inf
-    in_lower: float = -jnp.inf
-    out_upper: float = jnp.inf
-    out_lower: float = 0.0
+    _forward_fn: callable = jax.nn.softplus
+    _inverse_fn: callable = lambda x: jnp.log(jnp.exp(x) - 1)
+    _in_upper: float = jnp.inf
+    _in_lower: float = -jnp.inf
+    _out_upper: float = jnp.inf
+    _out_lower: float = 0.0
 
 
 @dataclass
-class InvSoftplus(Bijector):
-    forward_fn: callable = lambda x: jnp.log(jnp.exp(x) - 1)
-    inverse_fn: callable = jax.nn.softplus
-    in_upper: float = jnp.inf
-    in_lower: float = 0.0
-    out_upper: float = jnp.inf
-    out_lower: float = -jnp.inf
+class InverseSoftplus(Bijector):
+    _forward_fn: callable = lambda x: jnp.log(jnp.exp(x) - 1)
+    _inverse_fn: callable = jax.nn.softplus
+    _in_upper: float = jnp.inf
+    _in_lower: float = 0.0
+    _out_upper: float = jnp.inf
+    _out_lower: float = -jnp.inf
 
 
 def white_forward_fn(self, value):
     positive_bijector = get_positive_bijector()
     X_inducing = self.X_inducing()
-    mean = self.mean()
+    mean = self.latent_gp.mean()
 
     value = repeat_to_size(value, X_inducing.shape[0])
     raw_value = positive_bijector.inverse(value)
-    covariance = self.kernel_fn(X_inducing, X_inducing)
+    covariance = self.latent_gp.kernel(X_inducing, X_inducing)
     stable_covariance = add_to_diagonal(covariance, 0.0, get_default_jitter())
     cholesky = jnp.linalg.cholesky(stable_covariance)
 
@@ -193,47 +201,52 @@ def white_forward_fn(self, value):
 def white_inverse_fn(self, white_value):
     positive_bijector = get_positive_bijector()
     X_inducing = self.X_inducing()
-    mean = self.mean()
-    covariance = self.kernel_fn(X_inducing, X_inducing)
+    mean = self.latent_gp.mean()
+    covariance = self.latent_gp.kernel(X_inducing, X_inducing)
     stable_covariance = add_to_diagonal(covariance, 0.0, get_default_jitter())
     cholesky = jnp.linalg.cholesky(stable_covariance)
-    white_value = repeat_to_size(white_value, X_inducing.shape[0])
     raw_value = cholesky @ white_value + mean
     return positive_bijector(raw_value)
 
 
 @dataclass
 class White(Bijector):
-    kernel_fn: callable = None
+    latent_gp: Model = None
     X_inducing: Parameter = None
-    mean: Mean = None
+    _in_upper: float = jnp.inf
+    _in_lower: float = 0.0
+    _out_upper: float = jnp.inf
+    _out_lower: float = -jnp.inf
 
     def __post_init__(self):
-        self.forward_fn = lambda x: white_forward_fn(self, x)
-        self.inverse_fn = lambda x: white_inverse_fn(self, x)
+        self._forward_fn = lambda value: white_forward_fn(self, value)
+        self._inverse_fn = lambda white_value: white_inverse_fn(self, white_value)
 
 
 @dataclass
-class InvWhite(Bijector):
-    kernel_fn: callable = None
+class InverseWhite(Bijector):
+    latent_gp: Model = None
     X_inducing: Parameter = None
-    mean: Mean = None
+    _in_upper: float = jnp.inf
+    _in_lower: float = -jnp.inf
+    _out_upper: float = jnp.inf
+    _out_lower: float = 0.0
 
     def __post_init__(self):
-        self.forward_fn = lambda x: white_inverse_fn(self, x)
-        self.inverse_fn = lambda x: white_forward_fn(self, x)
+        self._forward_fn = lambda white_value: white_inverse_fn(self, white_value)
+        self._inverse_fn = lambda value: white_forward_fn(self, value)
 
 
-all_bijectors = {
-    "Log": Log,
-    "Exp": Exp,
-    "Sigmoid": Sigmoid,
-    "Logit": Logit,
-    "Identity": Identity,
-    "SquarePlus": SquarePlus,
-    "Softplus": Softplus,
-    "White": White,
+bijector_pairs = {
+    Exp: Log,
+    Sigmoid: Logit,
+    Identity: Identity,
+    Square: Sqrt,
+    SquarePlus: InverseSquarePlus,
+    Softplus: InverseSoftplus,
+    White: InverseWhite,
 }
+bijector_pairs.update({v: k for k, v in bijector_pairs.items()})
 
 
 def set_default_bijector(bijector):
@@ -242,7 +255,7 @@ def set_default_bijector(bijector):
 
 
 def get_default_bijector():
-    bijector = all_bijectors[os.environ["DEFAULT_BIJECTOR"]]
+    bijector = globals()[os.environ["DEFAULT_BIJECTOR"]]
     return bijector()
 
 
@@ -252,5 +265,5 @@ def set_positive_bijector(bijector):
 
 
 def get_positive_bijector():
-    bijector = all_bijectors[os.environ["POSITIVE_BIJECTOR"]]
+    bijector = globals()[os.environ["POSITIVE_BIJECTOR"]]
     return bijector()

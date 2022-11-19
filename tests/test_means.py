@@ -8,15 +8,17 @@ import jax.tree_util as jtu
 import jax.numpy as jnp
 
 from gpax.means import Scalar, Average
-from gpax.core import get_default_bijector
+from gpax.core import Parameter
+import gpax.bijectors as gb
+import gpax.distributions as gd
 from tests.utils import assert_same_pytree
 
 
 @pytest.mark.parametrize(
     "Mean, kwargs, expected, bijectors_expected, y",
     [
-        (Scalar, {"value": 0.0}, 0.0, get_default_bijector(), None),
-        (Scalar, {"value": 1.0}, 1.0, get_default_bijector(), None),
+        (Scalar, {"value": Parameter(0.0)}, 0.0, gb.get_default_bijector(), None),
+        (Scalar, {"value": Parameter(1.0)}, 1.0, gb.get_default_bijector(), None),
         (Average, {}, 2.0, {}, jnp.array([1.0, 2.0, 3.0])),
     ],
 )
@@ -41,18 +43,6 @@ def test_functionality():
     mean.value.set(2.0)
     assert mean.value() == 2.0
     assert params["value"]() == 2.0
-
-    # constrain and unconstrain
-    assert mean.constrained == True
-    mean.unconstrain()
-    assert mean.constrained == False
-    mean.constrain()
-    assert mean.constrained == True
-    assert mean.value() == 2.0
-
-    with pytest.raises(AssertionError):
-        # It is already constrained so it should raise an error
-        mean.constrain()
 
     # initialize
     mean.initialize(jax.random.PRNGKey(0))

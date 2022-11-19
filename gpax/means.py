@@ -1,7 +1,7 @@
 from gpax.core import Parameter
-import gpax.distributions as gd
 from gpax.core import Module
 from chex import dataclass
+from typing import Union
 
 
 class Mean(Module):
@@ -14,11 +14,11 @@ class Mean(Module):
 
 @dataclass
 class Scalar(Mean):
-    value: float = 1.0
-    value_prior: gd.Distribution = None
+    value: Union[Parameter, float] = 0.0
 
     def __post_init__(self):
-        self.value = Parameter(self.value, prior=self.value_prior)
+        if not isinstance(self.value, Parameter):
+            self.value = Parameter(self.value)
 
     def __call__(self, y=None):
         return self.value()
@@ -26,8 +26,8 @@ class Scalar(Mean):
     def __get_params__(self):
         return {"value": self.value}
 
-    def set_params(self, params):
-        self.value.set(params["value"])
+    def set_params(self, raw_params):
+        self.value.set(raw_params["value"])
 
 
 @dataclass
@@ -38,5 +38,5 @@ class Average(Mean):
     def __get_params__(self):
         return {}
 
-    def set_params(self, params):
+    def set_params(self, raw_params):
         pass

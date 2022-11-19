@@ -32,17 +32,12 @@ class ExactGPRegression(Model):
     kernel: Kernel = None
     likelihood: Likelihood = None
     mean: Mean = None
-    X_inducing: Array = None
+    X_inducing: Parameter = None
 
     def __post_init__(self):
         assert self.kernel is not None, "kernel must be provided"
         assert self.likelihood is not None, "likelihood must be provided"
         assert self.mean is not None, "mean must be provided"
-        if self.X_inducing is not None:
-            X_inducing = Parameter(self.X_inducing, fixed_init=True)
-            self.common_params = {"X_inducing": X_inducing}
-            self.kernel.common_params = self.common_params
-            self.likelihood.common_params = self.common_params
 
     def __get_params__(self):
         params = {
@@ -51,15 +46,25 @@ class ExactGPRegression(Model):
             "mean": self.mean.__get_params__(),
         }
         if self.X_inducing is not None:
-            params["X_inducing"] = self.common_params["X_inducing"]
+            params["X_inducing"] = self.X_inducing
+            if "X_inducing" in params["likelihood"]:
+                params["likelihood"].pop("X_inducing")
+            if "X_inducing" in params["kernel"]:
+                params["kernel"].pop("X_inducing")
         return params
 
     def set_params(self, params):
-        self.kernel.set_params(params["kernel"])
-        self.likelihood.set_params(params["likelihood"])
         self.mean.set_params(params["mean"])
+
+        kernel_params = params["kernel"]
+        likelihood_params = params["likelihood"]
         if self.X_inducing is not None:
-            self.common_params["X_inducing"].set(params["X_inducing"])
+            self.X_inducing.set(params["X_inducing"])
+            kernel_params = {**kernel_params, "X_inducing": params["X_inducing"]}
+            likelihood_params = {**likelihood_params, "X_inducing": params["X_inducing"]}
+
+        self.kernel.set_params(kernel_params)
+        self.likelihood.set_params(likelihood_params)
 
     def log_probability(self, X, y):
         """
@@ -80,30 +85,6 @@ class ExactGPRegression(Model):
         )
 
         return log_likelihood
-
-    def optimize(self, key, optimizer, X, y, n_iters, include_prior=True, lax_scan=True):
-        self.initialize(key)
-        self.unconstrain()
-        raw_params = self.get_params()
-
-        def loss_fn(raw_params):
-            model = deepcopy(self)
-            model.unconstrain()  # Model must be in unconstrained state before setting params
-            model.set_params(raw_params)
-            model.constrain()
-
-            log_prior = 0.0
-            if include_prior:
-                log_prior = model.log_prior()
-
-            log_prob = model.log_probability(X, y)
-            return -log_prob - log_prior
-
-        result = train_fn(loss_fn, raw_params, optimizer, n_iters, lax_scan=lax_scan)
-        self.unconstrain()
-        self.set_params(result["raw_params"])
-        self.constrain()
-        return result
 
     def condition(self, X, y):
         """

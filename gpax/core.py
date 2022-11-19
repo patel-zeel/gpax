@@ -12,64 +12,70 @@ is_parameter = lambda x: isinstance(x, Parameter)
 
 # Core classes
 class Parameter:
-    def __init__(self, value: Any, bijector: gb.Bijector = None, prior: gd.Distribution = None, fixed_init=False):
+    def __init__(
+        self,
+        value: Any,
+        bijector: gb.Bijector = gb.get_default_bijector(),
+        prior: gd.Distribution = None,
+        fixed_init=False,
+        inversed_init=False,
+        inversed_prior=None,
+    ):
         self.fixed_init = fixed_init
-        self._value = jnp.asarray(value)
-        if bijector is None:
-            self._bijector = gb.get_default_bijector()
-        else:
-            self._bijector = bijector
-        self._prior = prior
+        self.inversed_init = inversed_init
+        self.inversed_prior = inversed_prior
+        self._bijector = bijector
+        self.__raw_value = self._bijector.inverse(jnp.asarray(value))
+        self._raw_prior = self._bijector.inverse(prior)
+        self.__value_is_changed = True
+        self.__buffer_value = None
 
     def __call__(self):
-        return self._value
+        if self.__value_is_changed:
+            self.__buffer_value = self._bijector(self.__raw_value)
+            self.__value_is_changed = False
+        return self.__buffer_value
 
-    def set(self, value):
-        self._value = jnp.asarray(value)
+    def get(self):
+        return self.__raw_value
 
-    def unconstrain(self):
-        self._value = self._bijector.inverse(self._value)
-        self._prior = self._bijector.inverse(self._prior)
-
-    def constrain(self):
-        self._value = self._bijector.forward(self._value)
-        self._prior = self._bijector.forward(self._prior)
+    def set(self, raw_value):
+        self.__raw_value = jnp.asarray(raw_value)
+        self.__value_is_changed = True
 
     def initialize(self, key):
         if self.fixed_init:
-            pass
-        elif self._prior is None:
+            return
+        if self._raw_prior is None:
+            raw_prior = gd.get_default_prior()
+        else:
+            raw_prior = self._raw_prior
 
-            self._value = self._prior.sample(key, self._value.shape)
+        if self.inversed_init:  # special case
+            transformed_value = self.inversed_prior.sample(key, ())
+            self.__raw_value = self._bijector.inverse(transformed_value)
+        else:
+            self.__raw_value = raw_prior.sample(key, self.__raw_value.shape)
+        self.__value_is_changed = True
 
     def log_prior(self):
-        return self._prior.log_prob(self._value)
+        if self._raw_prior is None:
+            return jnp.zeros_like(self.__raw_value)
+        return self._raw_prior.log_prob(self.__raw_value)
 
 
 @dataclass
 class Module:
-    constrained: bool = True
-
     def get_params(self, raw_dict=True):
         params = self.__get_params__()
         if raw_dict:
-            return jtu.tree_map(lambda x: x(), params, is_leaf=is_parameter)
+            return jtu.tree_map(lambda param: param.get(), params, is_leaf=is_parameter)
         else:
             return params
 
-    def constrain(self):
-        if self.constrained is True:
-            return
+    def get_constrained_params(self):
         params = self.get_params(raw_dict=False)
-        jtu.tree_map(lambda param: param.constrain(), params, is_leaf=is_parameter)
-        self.constrained = True
-
-    def unconstrain(self):
-        if self.constrained is False:
-            return
-        params = self.get_params(raw_dict=False)
-        jtu.tree_map(lambda param: param.unconstrain(), params, is_leaf=is_parameter)
-        self.constrained = False
+        return jtu.tree_map(lambda x: x(), params, is_leaf=is_parameter)
 
     def initialize(self, key):
         params = self.get_params(raw_dict=False)

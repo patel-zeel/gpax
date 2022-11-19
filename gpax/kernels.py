@@ -7,6 +7,7 @@ import gpax.distributions as gd
 import gpax.bijectors as gb
 from gpax.utils import squared_distance, distance, repeat_to_size
 from chex import dataclass
+from typing import Union
 
 
 class Kernel(Module):
@@ -62,26 +63,27 @@ class SubKernel(Kernel):
 
 @dataclass
 class Smooth(SubKernel):
-    lengthscale: float = 1.0
-    lengthscale_prior: gd.Distribution = None
-    scale: float = 1.0
-    scale_prior: gd.Distribution = None
+    lengthscale: Union[Parameter, float] = 1.0
+    scale: Union[Parameter, float] = 1.0
 
     def __post_init__(self):
         super(Smooth, self).__post_init__()
+        if not isinstance(self.lengthscale, Parameter):
+            self.lengthscale = Parameter(self.lengthscale, gb.get_positive_bijector())
+        if not isinstance(self.scale, Parameter):
+            self.scale = Parameter(self.scale, gb.get_positive_bijector())
+
+        raw_value = self.lengthscale()
         if self.ARD:
-            lengthscale = jnp.asarray(self.lengthscale).squeeze()
-            assert lengthscale.size in (
+            assert raw_value.size in (
                 1,
                 self.input_dim,
             ), "lengthscale must be a scalar or an array of shape (input_dim,)."
-            lengthscale = repeat_to_size(lengthscale, self.input_dim)
+            raw_value = repeat_to_size(raw_value, self.input_dim)
         else:
-            lengthscale = jnp.asarray(self.lengthscale).squeeze()
-            assert lengthscale.shape == (), "lengthscale must be a scalar when ARD=False."
+            assert raw_value.shape == (), "lengthscale must be a scalar when ARD=False."
 
-        self.lengthscale = Parameter(lengthscale, bijector=gb.get_positive_bijector(), prior=self.lengthscale_prior)
-        self.scale = Parameter(self.scale, bijector=gb.get_positive_bijector(), prior=self.scale_prior)
+        self.lengthscale.set(raw_value)
 
     def call(self, X1, X2):
         kernel_fn = self.call_on_a_pair
@@ -92,9 +94,9 @@ class Smooth(SubKernel):
     def __get_params__(self):
         return {"lengthscale": self.lengthscale, "scale": self.scale}
 
-    def set_params(self, params):
-        self.lengthscale.set(params["lengthscale"])
-        self.scale.set(params["scale"])
+    def set_params(self, raw_params):
+        self.lengthscale.set(raw_params["lengthscale"])
+        self.scale.set(raw_params["scale"])
 
 
 class RBF(Smooth):
@@ -150,12 +152,12 @@ class Matern52(Smooth):
 @dataclass
 class Polynomial(SubKernel):
     order: float = 1.0
-    center: float = 0.0
-    center_prior: gd.Distribution = None
+    center: Union[Parameter, float] = 0.0
 
     def __post_init__(self):
         super(Polynomial, self).__post_init__()
-        self.center = Parameter(self.center, bijector=gb.get_positive_bijector(), prior=self.center_prior)
+        if not isinstance(self.center, Parameter):
+            self.center = Parameter(self.center, gb.get_positive_bijector())
 
     def call(self, X1, X2):
         return (X1 @ X2.T + self.center()) ** self.order

@@ -3,6 +3,7 @@ import os
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 import jax
+import jax.tree_util as jtu
 import jax.numpy as jnp
 
 import pytest
@@ -34,7 +35,7 @@ def test_execution(X, kernel, stheno_kernel, ls, scale):
     if kernel is gpk.Polynomial:
         order = 1.0
         kernel = kernel(input_dim=X.shape[1], order=order)
-        params = kernel.get_params()
+        params = kernel.get_constrained_params()
 
         stheno_kernel = stheno_kernel() + params["center"]
 
@@ -45,7 +46,7 @@ def test_execution(X, kernel, stheno_kernel, ls, scale):
 
     else:
         kernel = kernel(input_dim=X.shape[1], lengthscale=ls, scale=scale)
-        params = kernel.get_params()
+        params = kernel.get_constrained_params()
         assert len(params["lengthscale"]) == X.shape[1]
         kernel_stheno = (params["scale"] ** 2) * stheno_kernel().stretch(params["lengthscale"])
         ours = kernel(X, X)
@@ -67,7 +68,7 @@ def test_combinations():
     ours = kernel(X, X)
     stheno_vals = kernel_stheno(X, X)
 
-    assert jnp.allclose(ours, B.dense(stheno_vals))
+    assert jnp.allclose(ours, B.dense(stheno_vals), atol=1e-2)
 
 
 # def test_gibbs_kernel_dry_run():
