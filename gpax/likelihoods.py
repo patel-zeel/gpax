@@ -28,7 +28,7 @@ class Gaussian(Likelihood):
         if not isinstance(self.scale, Parameter):
             self.scale = Parameter(self.scale, gb.get_positive_bijector())
 
-    def __call__(self, X):
+    def __call__(self, X, train_mode=True):  # train_mode is for api consistency
         return self.scale()
 
     def __get_params__(self):
@@ -41,9 +41,9 @@ class Gaussian(Likelihood):
 @dataclass
 class HeteroscedasticGaussian(Likelihood):
     scale_inducing: Union[Parameter, Array] = 1.0
-    type: str = "gp_neurips"
+    method: str = "gp_neurips"  # "heinonen"
     latent_gp: Model = None
-    X_inducing: Array = None
+    X_inducing: Parameter = None
 
     def __post_init__(self):
         if not isinstance(self.scale_inducing, Parameter):
@@ -57,29 +57,38 @@ class HeteroscedasticGaussian(Likelihood):
             )
 
     def __get_params__(self):
-        return {
+        params = {
             "latent_gp": self.scale_inducing._bijector.latent_gp.__get_params__(),
             "scale_inducing": self.scale_inducing,
-            "X_inducing": self.scale_inducing._bijector.X_inducing,
         }
+        params["X_inducing"] = self.scale_inducing._bijector.X_inducing
+        return params
 
     def set_params(self, raw_params):
         self.scale_inducing._bijector.latent_gp.set_params(raw_params["latent_gp"])
         self.scale_inducing.set(raw_params["scale_inducing"])
         self.scale_inducing._bijector.X_inducing.set(raw_params["X_inducing"])
 
-    def __call__(self, X):
-        positive_bijector = self.scale_inducing.inversed_prior.bijector
-        if self.type == "gp_neurips":
-            X_inducing = self.scale_inducing._bijector.X_inducing()
-            scale_inducing = self.scale_inducing()
-            raw_scale_inducing = positive_bijector.inverse(scale_inducing)
-            scale = self.scale_inducing._bijector.latent_gp.predict(
-                X_inducing, raw_scale_inducing, X, include_noise=False, return_cov=False
-            )
-            return positive_bijector(scale)
+    def __call__(self, X: Array, train_mode: bool = True):
+        positive_bijector = gb.get_positive_bijector()
+        X_inducing = self.scale_inducing._bijector.X_inducing()
+        scale_inducing = self.scale_inducing()
+
+        if self.method == "gp_neurips":  # Does not depend on train_mode
+            train_mode = False
+        elif self.method == "heinonen":
+            pass
         else:
-            raise NotImplementedError(f"{self.prior_type=} is not implemented.")
+            raise ValueError(f"{self.method=} is not implemented.")
+
+        if train_mode:
+            return scale_inducing
+        else:
+            raw_scale_inducing = positive_bijector.inverse(scale_inducing)
+            raw_scale = self.scale_inducing._bijector.latent_gp.predict(
+                X_inducing, raw_scale_inducing, X, include_noise=False, return_cov=False, include_train_likelihood=False
+            )
+            return positive_bijector(raw_scale)
 
 
 # class HeinonenHeteroscedasticNoise(Noise):

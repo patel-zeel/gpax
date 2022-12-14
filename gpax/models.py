@@ -46,7 +46,9 @@ class ExactGPRegression(Model):
             "mean": self.mean.__get_params__(),
         }
         if self.X_inducing is not None:
+            assert self.kernel.method == self.likelihood.method
             params["X_inducing"] = self.X_inducing
+
             if "X_inducing" in params["likelihood"]:
                 params["likelihood"].pop("X_inducing")
             if "X_inducing" in params["kernel"]:
@@ -59,6 +61,7 @@ class ExactGPRegression(Model):
         kernel_params = params["kernel"]
         likelihood_params = params["likelihood"]
         if self.X_inducing is not None:
+            assert self.kernel.method == self.likelihood.method
             self.X_inducing.set(params["X_inducing"])
             kernel_params = {**kernel_params, "X_inducing": params["X_inducing"]}
             likelihood_params = {**likelihood_params, "X_inducing": params["X_inducing"]}
@@ -86,7 +89,7 @@ class ExactGPRegression(Model):
 
         return log_likelihood
 
-    def condition(self, X, y):
+    def condition(self, X, y, include_train_likelihood=True):
         """
         This function is useful while doing batch prediction.
         """
@@ -95,30 +98,35 @@ class ExactGPRegression(Model):
 
         mean = self.mean(y=y)
         y_bar = y - mean
-        noisy_covariance = add_to_diagonal(train_cov, noise_scale**2, get_default_jitter())
+        if include_train_likelihood:
+            noisy_covariance = add_to_diagonal(train_cov, noise_scale**2, get_default_jitter())
+        else:
+            noisy_covariance = add_to_diagonal(train_cov, 0.0, get_default_jitter())
         k_inv_y, k_cholesky = get_a_inv_b(noisy_covariance, y_bar, return_cholesky=True)
 
         def predict_fn(X_test, return_cov=True, include_noise=True):
-            K_star = self.kernel(X_test, X)
+            K_star = self.kernel(X_test, X, train_mode=False)
             pred_mean = K_star @ k_inv_y + mean
 
             if return_cov:
                 k_inv_k_star = jsp.linalg.cho_solve((k_cholesky, True), K_star.T)
-                pred_cov = self.kernel(X_test, X_test) - (K_star @ k_inv_k_star)
+                pred_cov = self.kernel(X_test, X_test, train_mode=False) - (K_star @ k_inv_k_star)
                 if include_noise:
-                    pred_cov = add_to_diagonal(pred_cov, self.likelihood(X_test) ** 2, get_default_jitter())
+                    pred_cov = add_to_diagonal(
+                        pred_cov, self.likelihood(X_test, train_mode=False) ** 2, get_default_jitter()
+                    )
                 return pred_mean, pred_cov
             else:
                 return pred_mean
 
         return predict_fn
 
-    def predict(self, X, y, X_test, return_cov=True, include_noise=True):
+    def predict(self, X, y, X_test, return_cov=True, include_noise=True, include_train_likelihood=True):
         """
         This method is suitable for one time prediction.
         In case of batch prediction, it is better to use `condition` method in combination with `predict`.
         """
-        predict_fn = self.condition(X, y)
+        predict_fn = self.condition(X, y, include_train_likelihood)
         return predict_fn(X_test, return_cov=return_cov, include_noise=include_noise)
 
 

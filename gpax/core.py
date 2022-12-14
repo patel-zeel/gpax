@@ -17,10 +17,12 @@ class Parameter:
         value: Any,
         bijector: gb.Bijector = gb.get_default_bijector(),
         prior: gd.Distribution = None,
+        trainable: bool = True,
         fixed_init=False,
         inversed_init=False,
         inversed_prior=None,
     ):
+        self.trainable = trainable
         self.fixed_init = fixed_init
         self.inversed_init = inversed_init
         self.inversed_prior = inversed_prior
@@ -32,19 +34,22 @@ class Parameter:
 
     def __call__(self):
         if self.__value_is_changed:
-            self.__buffer_value = self._bijector(self.__raw_value)
+            self.__buffer_value = self._bijector(self.get())
             self.__value_is_changed = False
         return self.__buffer_value
 
     def get(self):
-        return self.__raw_value
+        raw_value = self.__raw_value
+        if self.trainable is False:
+            raw_value = jax.lax.stop_gradient(raw_value)
+        return raw_value
 
     def set(self, raw_value):
         self.__raw_value = jnp.asarray(raw_value)
         self.__value_is_changed = True
 
     def initialize(self, key):
-        if self.fixed_init:
+        if self.fixed_init or (self.trainable is False):
             return
         if self._raw_prior is None:
             raw_prior = gd.get_default_prior()
@@ -59,7 +64,7 @@ class Parameter:
         self.__value_is_changed = True
 
     def log_prior(self):
-        if self._raw_prior is None:
+        if self._raw_prior is None or (self.trainable is False):
             return jnp.zeros_like(self.__raw_value)
         return self._raw_prior.log_prob(self.__raw_value)
 

@@ -37,6 +37,25 @@ def stheno_log_prob(params):
     return stheno_gp(X, params["likelihood"]["scale"] ** 2).logpdf(y)
 
 
+def test_init():
+    ls = jnp.array(1.5).repeat(X.shape[1])
+    scale = jnp.array(2.0)
+    noise_scale = jnp.array(0.1)
+
+    kernel = RBF(input_dim=X.shape[1], lengthscale=ls, scale=scale)
+    gp = ExactGPRegression(kernel=kernel, likelihood=Gaussian(scale=noise_scale), mean=Scalar())
+
+    values = gp.get_constrained_params()
+    assert jnp.allclose(values["kernel"]["lengthscale"], ls)
+    assert jnp.allclose(values["kernel"]["scale"], scale)
+    assert jnp.allclose(values["likelihood"]["scale"], noise_scale)
+
+    raw_values = gp.get_params()
+    assert jnp.allclose(raw_values["kernel"]["lengthscale"], gp.kernel.lengthscale._bijector.inverse(ls))
+    assert jnp.allclose(raw_values["kernel"]["scale"], gp.kernel.scale._bijector.inverse(scale))
+    assert jnp.allclose(raw_values["likelihood"]["scale"], gp.likelihood.scale._bijector.inverse(noise_scale))
+
+
 @pytest.mark.parametrize("key", keys)
 @pytest.mark.parametrize(
     "kernel",

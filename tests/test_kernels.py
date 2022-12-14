@@ -9,6 +9,12 @@ import jax.numpy as jnp
 import pytest
 import gpax.distributions as gd
 import gpax.kernels as gpk
+from gpax.models import ExactGPRegression
+from gpax.core import Parameter
+import gpax.distributions as gd
+import gpax.bijectors as gb
+import gpax.likelihoods as gl
+import gpax.means as gm
 
 # from gpax.special_kernels import Gibbs
 from tests.utils import assert_same_pytree
@@ -69,6 +75,43 @@ def test_combinations():
     stheno_vals = kernel_stheno(X, X)
 
     assert jnp.allclose(ours, B.dense(stheno_vals), atol=1e-2)
+
+
+def test_gibbs_kernel():
+    num_datapoints = 10
+    num_inducing = 3
+    num_dims = 2
+
+    X = jax.random.normal(jax.random.PRNGKey(0), (num_datapoints, num_dims))
+    X_inducing = jax.random.normal(jax.random.PRNGKey(1), (num_inducing, num_dims))
+    X_inducing = Parameter(X_inducing, fixed_init=True)
+    ls_latent_gp = ExactGPRegression(kernel=gpk.RBF(input_dim=num_dims), mean=gm.Scalar(), likelihood=gl.Gaussian())
+    s_latent_gp = ExactGPRegression(kernel=gpk.RBF(input_dim=num_dims), mean=gm.Scalar(), likelihood=gl.Gaussian())
+    lenghscale = 1.0
+    scale = 1.0
+
+    kernel = gpk.Gibbs(
+        input_dim=num_dims,
+        lengthscale=lenghscale,
+        scale=scale,
+        X_inducing=X_inducing,
+        lengthscale_gp=ls_latent_gp,
+        scale_gp=s_latent_gp,
+    )
+
+    cov = kernel(X, X)
+    assert cov.shape == (num_datapoints, num_datapoints)
+
+    kernel = gpk.Gibbs(
+        input_dim=num_dims,
+        lengthscale=lenghscale,
+        scale=scale,
+        flex_lengthscale=False,
+        flex_scale=False,
+    )
+
+    cov = kernel(X, X)
+    assert cov.shape == (num_datapoints, num_datapoints)
 
 
 # def test_gibbs_kernel_dry_run():
