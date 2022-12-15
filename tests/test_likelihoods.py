@@ -6,74 +6,52 @@ import jax
 import jax.numpy as jnp
 
 import pytest
-import gpax.bijectors as gb
-import gpax.distributions as gd
 
 from gpax.models import ExactGPRegression
-from gpax.core import Parameter
-import gpax.kernels as gpk
-import gpax.likelihoods as gpl
-import gpax.means as gpm
-
-# from gpax.likelihoods import HeteroscedasticGaussian
-# from gpax.models import ExactGPRegression
-# from gpax.means import Scalar
-# from gpax.kernels import RBF
+from gpax.core import Parameter, get_positive_bijector
+from gpax.kernels import RBF
+from gpax.likelihoods import Gaussian, HeteroscedasticHeinonen, HeteroscedasticDeltaInducing
 
 from tests.utils import assert_same_pytree, assert_approx_same_pytree
 
+X_inducing = jax.random.uniform(jax.random.PRNGKey(0), (5, 3))
+X = jax.random.uniform(jax.random.PRNGKey(0), (10, 3))
+X_new = jax.random.uniform(jax.random.PRNGKey(1), (15, 3))
+
 
 def test_gaussian():
-    likelihood = gpl.Gaussian()
-    params = likelihood.get_params(raw_dict=False)
-    assert_same_pytree(params["scale"](), jnp.array(1.0))
+    likelihood = Gaussian()
+    assert likelihood.scale() == 1.0
+    assert isinstance(likelihood.scale.bijector, get_positive_bijector().__class__)
+    params = likelihood.get_parameters()
+    assert_same_pytree(params, {"scale": 1.0})
 
-    num = 0.3
-    likelihood = gpl.Gaussian(scale=num)
-    params = likelihood.get_params(raw_dict=False)
-    assert_approx_same_pytree(params["scale"](), jnp.array(num))
-
-
-def test_dynamic_default():
-    likelihood = gpl.Gaussian()
-    assert isinstance(likelihood.scale._bijector, type(gb.get_positive_bijector()))
-    gb.set_positive_bijector(gb.Softplus)
-
-    likelihood = gpl.Gaussian()
-    assert isinstance(likelihood.scale._bijector, gb.Softplus)
+    likelihood_fn = likelihood.get_likelihood_fn()
+    scale = likelihood_fn(X)
+    assert scale == 1.0
 
 
-@pytest.mark.parametrize("method", ["gp_neurips", "heinonen"])
-def test_heteroscedastic_gp_neurips(method):
-    num_datapoints = 10
-    num_test = 15
-    num_inducing = 3
-    num_dims = 2
+@pytest.mark.parametrize("likelihood_type", [HeteroscedasticHeinonen, HeteroscedasticDeltaInducing])
+def test_heteroscedastic(likelihood_type):
+    X_inducing_tmp = X_inducing if likelihood_type is HeteroscedasticDeltaInducing else X
+    likelihood = likelihood_type(X_inducing_tmp, 2.0, 3.0, RBF)
+    params = likelihood.get_parameters()
+    assert_same_pytree(
+        params,
+        {
+            "latent_gp": {
+                "latent": jnp.zeros(()).repeat(X_inducing_tmp.shape[0]),
+                "lengthscale": jnp.array(2.0).repeat(X.shape[1]),
+                "scale": 3.0,
+            }
+        },
+    )
 
-    X = jax.random.normal(jax.random.PRNGKey(0), (num_datapoints, num_dims))
-    X_new = jax.random.normal(jax.random.PRNGKey(1), (num_test, num_dims))
-
-    if method == "gp_neurips":
-        X_inducing = jax.random.normal(jax.random.PRNGKey(1), (num_inducing, num_dims))
-    elif method == "heinonen":
-        X_inducing = X
-    else:
-        raise ValueError(f"Unknown method {method}")
-    X_inducing = Parameter(X_inducing, fixed_init=True)
-    latent_gp = ExactGPRegression(kernel=gpk.RBF(input_dim=num_dims), mean=gpm.Scalar(), likelihood=gpl.Gaussian())
-    bijector = gb.InverseWhite(latent_gp=latent_gp, X_inducing=X_inducing)
-    prior = bijector(gd.Normal(loc=0.0, scale=1.0))
-    inversed_prior = gb.get_positive_bijector()(gd.Normal(loc=0.0, scale=1.0))
-    scale_inducing = Parameter(1.0, bijector, prior, inversed_init=True, inversed_prior=inversed_prior)
-    likelihood = gpl.HeteroscedasticGaussian(scale_inducing=scale_inducing)
-
-    params = likelihood.get_params()
-    if method == "gp_neurips":
-        assert params["scale_inducing"].shape == (num_inducing,)
-    elif method == "heinonen":
-        assert params["scale_inducing"].shape == (num_datapoints,)
-    else:
-        raise ValueError(f"Unknown method {method}")
-
-    infered_variance = likelihood(X_new, train_mode=False)
-    assert infered_variance.shape == (num_test,)
+    X_inducing_p = Parameter(X_inducing_tmp)
+    likelihood_fn = likelihood.get_likelihood_fn(X_inducing_p)
+    scale, log_prior = likelihood_fn(X)
+    assert scale.shape == (X.shape[0],)
+    likelihood.eval()
+    scale, scale_new = likelihood_fn(X, X_new)
+    assert scale.shape == (X.shape[0],)
+    assert scale_new.shape == (X_new.shape[0],)

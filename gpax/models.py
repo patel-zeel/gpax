@@ -5,17 +5,16 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 from jax.flatten_util import ravel_pytree
 
-from gpax.core import Module, Parameter
-from gpax.defaults import get_default_jitter
-import gpax.distributions as gd
-import gpax.bijectors as gb
+import tensorflow_probability.substrates.jax as tfp
+
+tfb = tfp.bijectors
+tfd = tfp.distributions
+
+from gpax.core import Module, Parameter, get_default_jitter, get_positive_bijector
 from gpax.utils import add_to_diagonal, get_a_inv_b, train_fn
 
-from jaxtyping import Array
+from jaxtyping import Array, Float
 from typing import TYPE_CHECKING
-
-from chex import dataclass
-from copy import deepcopy
 
 if TYPE_CHECKING:
     from gpax.kernels import Kernel
@@ -27,106 +26,174 @@ class Model(Module):
     pass
 
 
-@dataclass
+class LatentGP(Model):
+    def __init__(
+        self,
+        X: Float[Array, "N D"],
+        lengthscale: float = 1.0,
+        scale: float = 1.0,
+        latent_kernel_type: Kernel = None,
+        vmap: bool = False,
+    ):
+        super(LatentGP, self).__init__()
+        self.latent_kernel_type = latent_kernel_type
+        self.vmap = vmap
+
+        self.lengthscale = Parameter(jnp.array(lengthscale).repeat(X.shape[1]))
+        if self.vmap is False:
+            self.latent = Parameter(jnp.zeros(X.shape[0]))
+            self.scale = Parameter(scale)
+        else:
+            self.latent = Parameter(jnp.zeros(X.shape))
+            self.scale = Parameter(jnp.ones(X.shape[1]))
+
+    def common(self, ls, scale, latent, X):
+        kernel = self.latent_kernel_type(X=X, ARD=True, lengthscale=ls, scale=scale).eval().get_kernel_fn()
+        cov = kernel(X, X)
+        noisy_cov = add_to_diagonal(cov, 0.0, get_default_jitter())
+        chol = jnp.linalg.cholesky(noisy_cov)
+        log_fx = chol @ latent
+        return log_fx, chol, kernel
+
+    def __call__(self, X_inducing, X, X_new=None):
+        if self.vmap is False:
+            return self.vmap_fn(self.lengthscale(), self.scale(), self.latent(), X_inducing, X, X_new)
+        else:
+            if self.training:
+                return jax.vmap(self.vmap_fn, in_axes=(0, 0, 1, 1, 1), out_axes=(1, 0))(
+                    self.lengthscale(),
+                    self.scale(),
+                    self.latent(),
+                    X_inducing[..., None],
+                    X[..., None],
+                )
+            else:
+                return jax.vmap(self.vmap_fn, in_axes=(0, 0, 1, 1, 1, 1), out_axes=(1, 1))(
+                    self.lengthscale(),
+                    self.scale(),
+                    self.latent(),
+                    X_inducing[..., None],
+                    X[..., None],
+                    X_new[..., None],
+                )
+
+
+class LatentGPHeinonen(LatentGP):
+    def vmap_fn(self, ls, scale, latent, X_inducing, X, X_new=None):
+        # X_inducing and X must be same in this method
+        positive_bijector = get_positive_bijector()
+
+        log_fx, chol, kernel = self.common(ls, scale, latent, X_inducing)
+        fx = positive_bijector(log_fx)
+        if self.training:
+            log_prior = tfd.MultivariateNormalTriL(loc=log_fx.mean(), scale_tril=chol).log_prob(log_fx)
+            return fx, log_prior
+        else:
+
+            def predict_fn(x):
+                cross_cov = kernel(x, X_inducing)
+                alpha = jsp.linalg.cho_solve((chol, True), log_fx)
+                fx_new = positive_bijector(cross_cov @ alpha)
+                return fx_new
+
+            fx = predict_fn(X)
+            fx_new = predict_fn(X_new)
+            return fx, fx_new
+
+
+class LatentGPDeltaInducing(LatentGP):
+    def vmap_fn(self, ls, scale, latent, X_inducing, X, X_new=None):
+        positive_bijector = get_positive_bijector()
+        log_fx_inducing, chol_inducing, kernel = self.common(ls, scale, latent, X_inducing)
+        cross_cov = kernel(X, X_inducing)
+        alpha = jsp.linalg.cho_solve((chol_inducing, True), log_fx_inducing)
+        log_fx = cross_cov @ alpha
+        fx = positive_bijector(log_fx)
+        if self.training:
+            fx = positive_bijector(log_fx)
+            log_prior = tfd.MultivariateNormalTriL(loc=log_fx_inducing.mean(), scale_tril=chol_inducing).log_prob(
+                log_fx_inducing
+            )
+            return fx, log_prior
+        else:
+            cross_cov_new = kernel(X_new, X_inducing)
+            fx_new = positive_bijector(cross_cov_new @ alpha)
+            return fx, fx_new
+
+
 class ExactGPRegression(Model):
-    kernel: Kernel = None
-    likelihood: Likelihood = None
-    mean: Mean = None
-    X_inducing: Parameter = None
-
-    def __post_init__(self):
-        assert self.kernel is not None, "kernel must be provided"
-        assert self.likelihood is not None, "likelihood must be provided"
-        assert self.mean is not None, "mean must be provided"
-
-    def __get_params__(self):
-        params = {
-            "kernel": self.kernel.__get_params__(),
-            "likelihood": self.likelihood.__get_params__(),
-            "mean": self.mean.__get_params__(),
-        }
-        if self.X_inducing is not None:
-            assert self.kernel.method == self.likelihood.method
-            params["X_inducing"] = self.X_inducing
-
-            if "X_inducing" in params["likelihood"]:
-                params["likelihood"].pop("X_inducing")
-            if "X_inducing" in params["kernel"]:
-                params["kernel"].pop("X_inducing")
-        return params
-
-    def set_params(self, params):
-        self.mean.set_params(params["mean"])
-
-        kernel_params = params["kernel"]
-        likelihood_params = params["likelihood"]
-        if self.X_inducing is not None:
-            assert self.kernel.method == self.likelihood.method
-            self.X_inducing.set(params["X_inducing"])
-            kernel_params = {**kernel_params, "X_inducing": params["X_inducing"]}
-            likelihood_params = {**likelihood_params, "X_inducing": params["X_inducing"]}
-
-        self.kernel.set_params(kernel_params)
-        self.likelihood.set_params(likelihood_params)
+    def __init__(
+        self,
+        kernel: Kernel,
+        likelihood: Likelihood,
+        mean: Mean,
+        X_inducing: Float[Array, "N D"] = None,
+    ):
+        super(ExactGPRegression, self).__init__()
+        self.kernel = kernel
+        self.likelihood = likelihood
+        self.mean = mean
+        if X_inducing is not None:
+            self.X_inducing = Parameter(X_inducing)
+        else:
+            self.X_inducing = None
 
     def log_probability(self, X, y):
+        self.train()
         """
         prior_type: default: None, possible values: "prior", "posterior", None
         """
-        covariance = self.kernel(X, X)
-        noise_scale = self.likelihood(X)
+        kernel_fn = self.kernel.get_kernel_fn(self.X_inducing)
+        likelihood_fn = self.likelihood.get_likelihood_fn(self.X_inducing)
 
-        y_bar = y - self.mean(y=y)
+        covariance, log_prior_cov = kernel_fn(X, X)
+        noise_scale, log_prior_noise = likelihood_fn(X)
         noisy_covariance = add_to_diagonal(covariance, noise_scale**2, get_default_jitter())
 
-        k_inv_y, k_cholesky = get_a_inv_b(noisy_covariance, y_bar, return_cholesky=True)
+        log_likelihood = tfd.MultivariateNormalFullCovariance(
+            loc=self.mean(y=y), covariance_matrix=noisy_covariance
+        ).log_prob(y)
 
-        log_likelihood = (
-            -0.5 * (y_bar.ravel() * k_inv_y.ravel()).sum()  # This will break for multi-dimensional y
-            - jnp.log(k_cholesky.diagonal()).sum()
-            - 0.5 * y.shape[0] * jnp.log(2 * jnp.pi)
-        )
+        return log_likelihood + log_prior_cov + log_prior_noise
 
-        return log_likelihood
-
-    def condition(self, X, y, include_train_likelihood=True):
+    def condition(self, X, y):
         """
         This function is useful while doing batch prediction.
         """
-        train_cov = self.kernel(X, X)
-        noise_scale = self.likelihood(X)
+        self.eval()
+
+        kernel_fn = self.kernel.get_kernel_fn(self.X_inducing)
+        likelihood_fn = self.likelihood.get_likelihood_fn(self.X_inducing)
+
+        train_cov = kernel_fn(X, X)
+        noise_scale = likelihood_fn(X)
 
         mean = self.mean(y=y)
         y_bar = y - mean
-        if include_train_likelihood:
-            noisy_covariance = add_to_diagonal(train_cov, noise_scale**2, get_default_jitter())
-        else:
-            noisy_covariance = add_to_diagonal(train_cov, 0.0, get_default_jitter())
+        noisy_covariance = add_to_diagonal(train_cov, noise_scale**2, get_default_jitter())
         k_inv_y, k_cholesky = get_a_inv_b(noisy_covariance, y_bar, return_cholesky=True)
 
         def predict_fn(X_test, return_cov=True, include_noise=True):
-            K_star = self.kernel(X_test, X, train_mode=False)
+            K_star = kernel_fn(X_test, X)
             pred_mean = K_star @ k_inv_y + mean
 
             if return_cov:
                 k_inv_k_star = jsp.linalg.cho_solve((k_cholesky, True), K_star.T)
-                pred_cov = self.kernel(X_test, X_test, train_mode=False) - (K_star @ k_inv_k_star)
+                pred_cov = kernel_fn(X_test, X_test) - (K_star @ k_inv_k_star)
                 if include_noise:
-                    pred_cov = add_to_diagonal(
-                        pred_cov, self.likelihood(X_test, train_mode=False) ** 2, get_default_jitter()
-                    )
+                    pred_cov = add_to_diagonal(pred_cov, likelihood_fn(X_test) ** 2, get_default_jitter())
                 return pred_mean, pred_cov
             else:
                 return pred_mean
 
         return predict_fn
 
-    def predict(self, X, y, X_test, return_cov=True, include_noise=True, include_train_likelihood=True):
+    def predict(self, X, y, X_test, return_cov=True, include_noise=True):
         """
         This method is suitable for one time prediction.
         In case of batch prediction, it is better to use `condition` method in combination with `predict`.
         """
-        predict_fn = self.condition(X, y, include_train_likelihood)
+        predict_fn = self.condition(X, y)
         return predict_fn(X_test, return_cov=return_cov, include_noise=include_noise)
 
 
@@ -139,7 +206,7 @@ class ExactGPRegression(Model):
 #         X_inducing = params["X_inducing"]
 #         kernel_fn = self.kernel(params)
 #         prior_log_prob = 0.0
-#         if self.noise.__class__.__name__ == "HeinonenHeteroscedasticNoise":
+#         if self.noise.__class__.__name__ == "HeteroscedasticHeinonenNoise":
 #             if include_prior:
 #                 _, tmp_prior_log_prob = self.noise.train_noise(params, return_prior_log_prob=True)
 #                 prior_log_prob += tmp_prior_log_prob

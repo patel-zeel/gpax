@@ -4,15 +4,19 @@ import jax
 import jax.tree_util as jtu
 import jax.numpy as jnp
 
-from gpax.core import Parameter, Module
-import gpax.distributions as gd
-import gpax.bijectors as gb
+import tensorflow_probability.substrates.jax as tfp
+
+tfb = tfp.bijectors
+tfd = tfp.distributions
+
+from gpax.core import Parameter, Module, get_positive_bijector
+from gpax.models import LatentGPHeinonen, LatentGPDeltaInducing
 from gpax.utils import squared_distance, distance, repeat_to_size
-from chex import dataclass
-from typing import Union
+
+from jaxtyping import Array, Float
 
 
-class Kernel(Module):
+class MetaKernel(Module):
     def __add__(self, other):
         return Sum(k1=self, k2=other)
 
@@ -20,91 +24,97 @@ class Kernel(Module):
         return Product(k1=self, k2=other)
 
 
-@dataclass
-class MathKernel(Kernel):
-    k1: Kernel = None
-    k2: Kernel = None
+class MathKernel(MetaKernel):
+    def __init__(self, k1: MetaKernel, k2: MetaKernel):
+        super(MathKernel, self).__init__()
+        self.k1 = k1
+        self.k2 = k2
 
-    def __get_params__(self):
-        return {"k1": self.k1.__get_params__(), "k2": self.k2.__get_params__()}
+    def get_kernel_fn(self, X_inducing: Parameter = None):
+        k1 = self.k1.get_kernel_fn(X_inducing=X_inducing)
+        k2 = self.k2.get_kernel_fn(X_inducing=X_inducing)
 
-    def set_params(self, params):
-        self.k1.set_params(params["k1"])
-        self.k2.set_params(params["k2"])
+        def kernel_fn(X1, X2):
+            if self.training:
+                K1, log_prior1 = k1(X1, X2)
+                K2, log_prior2 = k2(X1, X2)
+                return self.operation(K1, K2), log_prior1 + log_prior2  # return log_prior
+            else:
+                return self.operation(k1(X1, X2), k2(X1, X2))
+
+        return kernel_fn
 
 
 class Sum(MathKernel):
-    def __call__(self, X1, X2, train_mode=True):
-        return self.k1(X1, X2, train_mode) + self.k2(X1, X2, train_mode)
+    @staticmethod
+    def operation(K1, K2):
+        return K1 + K2
 
 
 class Product(MathKernel):
-    def __call__(self, X1, X2, train_mode=True):
-        return self.k1(X1, X2, train_mode) * self.k2(X1, X2, train_mode)
+    @staticmethod
+    def operation(K1, K2):
+        return K1 * K2
 
 
-@dataclass
-class SubKernel(Kernel):
-    input_dim: int = None
-    active_dims: list = None
-    ARD: bool = True
-
-    def __post_init__(self):
+class Kernel(MetaKernel):
+    def __init__(self, X: Array, active_dims: list):
+        super(Kernel, self).__init__()
+        self.active_dims = active_dims
         if self.active_dims is None:
-            assert self.input_dim is not None, "input_dim must be specified if active_dims is None"
-            self.active_dims = list(range(self.input_dim))
-        if self.input_dim is None:
-            self.input_dim = len(self.active_dims)
-        assert len(self.active_dims) == self.input_dim, "active_dims must have the same length as input_dim."
-
-    def __call__(self, X1, X2, train_mode=True):
-        X1_slice = X1[:, self.active_dims]
-        X2_slice = X2[:, self.active_dims]
-        return self.call(X1_slice, X2_slice, train_mode)
-
-
-@dataclass
-class Smooth(SubKernel):
-    lengthscale: Union[Parameter, float] = 1.0
-    scale: Union[Parameter, float] = 1.0
-
-    def __post_init__(self):
-        super(Smooth, self).__post_init__()
-        if not isinstance(self.lengthscale, Parameter):
-            self.lengthscale = Parameter(self.lengthscale, gb.get_positive_bijector())
-        if not isinstance(self.scale, Parameter):
-            self.scale = Parameter(self.scale, gb.get_positive_bijector())
-
-        raw_value = self.lengthscale.get()
-        if self.ARD:
-            assert raw_value.size in (
-                1,
-                self.input_dim,
-            ), "lengthscale must be a scalar or an array of shape (input_dim,)."
-            raw_value = repeat_to_size(raw_value, self.input_dim)
+            assert X is not None, "X must be specified if active_dims is None"
+            self.active_dims = list(range(X.shape[1]))
         else:
-            assert raw_value.shape == (), "lengthscale must be a scalar when ARD=False."
+            self.active_dims = active_dims
 
-        self.lengthscale.set(raw_value)
+    def slice_inputs(self, *args):
+        return jtu.tree_map(lambda x: x[:, self.active_dims], args)
 
-        assert self.scale.get().shape == (), "scale must be a scalar."
 
-    def call(self, X1, X2, train_mode):
-        kernel_fn = self.call_on_a_pair
+class Smooth(Kernel):
+    def __init__(
+        self,
+        X: Array,
+        lengthscale: float = 1.0,
+        scale: float = 1.0,
+        active_dims: list = None,
+        ARD: bool = True,
+    ):
+        super(Smooth, self).__init__(X, active_dims)
+        lengthscale = jnp.asarray(lengthscale)
+        scale = jnp.asarray(scale)
+        self.ARD = ARD
+
+        if self.ARD:
+            assert lengthscale.size in (
+                1,
+                X.shape[1],
+            ), "lengthscale must be a scalar or an array of shape (input_dim,)."
+            lengthscale = repeat_to_size(lengthscale, X.shape[1])
+        else:
+            assert lengthscale.shape == (), "lengthscale must be a scalar when ARD=False."
+
+        assert scale.shape == (), "scale must be a scalar."
+
+        self.lengthscale = Parameter(lengthscale, get_positive_bijector())
+        self.scale = Parameter(scale, get_positive_bijector())
+
+    def get_kernel_fn(self, X_inducing: Parameter = None):
+        return self.call
+
+    def call(self, X1, X2):
+        kernel_fn = self.pair_wise
         kernel_fn = jax.vmap(kernel_fn, in_axes=(None, 0))
         kernel_fn = jax.vmap(kernel_fn, in_axes=(0, None))
-        return kernel_fn(X1, X2)
-
-    def __get_params__(self):
-        return {"lengthscale": self.lengthscale, "scale": self.scale}
-
-    def set_params(self, raw_params):
-        self.lengthscale.set(raw_params["lengthscale"])
-        self.scale.set(raw_params["scale"])
+        X1_slice, X2_slice = self.slice_inputs(X1, X2)
+        if self.training:
+            return kernel_fn(X1_slice, X2_slice), 0.0
+        else:
+            return kernel_fn(X1_slice, X2_slice)
 
 
 class RBF(Smooth):
-    def call_on_a_pair(self, x1, x2):
+    def pair_wise(self, x1, x2):
         x1_scaled = x1 / self.lengthscale()
         x2_scaled = x2 / self.lengthscale()
         sqr_dist = squared_distance(x1_scaled, x2_scaled)
@@ -119,7 +129,7 @@ SquaredExp = RBF
 
 
 class Matern12(Smooth):
-    def call_on_a_pair(self, x1, x2):
+    def pair_wise(self, x1, x2):
         x1_scaled = x1 / self.lengthscale()
         x2_scaled = x2 / self.lengthscale()
         dist = distance(x1_scaled, x2_scaled)
@@ -130,7 +140,7 @@ class Matern12(Smooth):
 
 
 class Matern32(Smooth):
-    def call_on_a_pair(self, x1, x2):
+    def pair_wise(self, x1, x2):
         x1_scaled = x1 / self.lengthscale()
         x2_scaled = x2 / self.lengthscale()
         arg = jnp.sqrt(3.0) * distance(x1_scaled, x2_scaled)
@@ -142,7 +152,7 @@ class Matern32(Smooth):
 
 
 class Matern52(Smooth):
-    def call_on_a_pair(self, x1, x2):
+    def pair_wise(self, x1, x2):
         x1_scaled = x1 / self.lengthscale()
         x2_scaled = x2 / self.lengthscale()
         arg = jnp.sqrt(5.0) * distance(x1_scaled, x2_scaled)
@@ -153,163 +163,171 @@ class Matern52(Smooth):
         return "Matern52"
 
 
-@dataclass
-class Polynomial(SubKernel):
-    order: float = 1.0
-    center: Union[Parameter, float] = 0.0
+class Polynomial(Kernel):
+    def __init__(self, order: float = 1.0, center: float = 0.0, X: Array = None, active_dims: list = None):
+        super(Polynomial, self).__init__(X, active_dims)
+        self.order = order
+        self.center = Parameter(center, get_positive_bijector())
 
-    def __post_init__(self):
-        super(Polynomial, self).__post_init__()
-        if not isinstance(self.center, Parameter):
-            self.center = Parameter(self.center, gb.get_positive_bijector())
+    def get_kernel_fn(self, X_inducing: Parameter = None):
+        return self.call
 
-    def call(self, X1, X2, train_mode):
-        return (X1 @ X2.T + self.center()) ** self.order
-
-    def __get_params__(self):
-        return {"center": self.center}
-
-    def set_params(self, params):
-        self.center.set(params["center"])
+    def call(self, X1, X2):
+        X1_slice, X2_slice = self.slice_inputs(X1, X2)
+        if self.training:
+            return (X1_slice @ X2_slice.T + self.center()) ** self.order, 0.0
+        else:
+            return (X1_slice @ X2_slice.T + self.center()) ** self.order
 
     def __repr__(self) -> str:
         return "Polynomial"
 
 
-@dataclass
-class Gibbs(SubKernel):
-    method: str = "gp_neurips"
-    lengthscale: Union[Parameter, float] = 1.0
-    lengthscale_gp: Model = None
-    flex_lengthscale: bool = True
-    scale: Union[Parameter, float] = 1.0
-    scale_gp: Model = None
-    flex_scale: bool = True
-    X_inducing: Array = None
-    # TODO: This supports only 1D lengthscales. ND version is not implemented yet.
+class Gibbs(Kernel):
+    def __init__(
+        self,
+        flex_lengthscale: bool,
+        flex_scale: bool,
+        lengthscale: float,
+        scale: float,
+        X: Array,
+        active_dims: list,
+        ARD: bool,
+    ):
+        super(Gibbs, self).__init__(X, active_dims)
+        self.flex_lengthscale = flex_lengthscale
+        self.flex_scale = flex_scale
+        self.ARD = ARD
 
-    def __post_init__(self):
-        super(Gibbs, self).__post_init__()
-        std_normal = gd.Normal(loc=0.0, scale=1.0)
-        positive_bijector = gb.get_positive_bijector()
-        inversed_prior = positive_bijector(gd.Normal(loc=0.0, scale=1.0))
-
-        if not isinstance(self.lengthscale, Parameter):
-            if self.flex_lengthscale:
-                assert self.X_inducing is not None, "X_inducing must be provided if lengthscale is not a Parameter."
-                assert (
-                    self.lengthscale_gp is not None
-                ), "lengthscale_gp must be provided if lengthscale is not a Parameter."
-                ls_bijector = gb.InverseWhite(latent_gp=self.lengthscale_gp, X_inducing=self.X_inducing)
-                ls_prior = ls_bijector(std_normal)
-                self.lengthscale = Parameter(
-                    self.lengthscale, ls_bijector, ls_prior, inversed_init=True, inversed_prior=inversed_prior
-                )
+        if self.flex_lengthscale is False:
+            if self.ARD:
+                lengthscale = repeat_to_size(lengthscale, X.shape[1])
             else:
-                self.lengthscale = Parameter(self.lengthscale, positive_bijector)
+                assert lengthscale.shape == (), "lengthscale must be a scalar when ARD=False."
+            self.lengthscale = Parameter(lengthscale, get_positive_bijector())
 
-        if not isinstance(self.scale, Parameter):
-            if self.flex_scale:
-                assert self.X_inducing is not None, "X_inducing must be provided if scale is not a Parameter."
-                assert self.scale_gp is not None, "scale_gp must be provided if scale is not a Parameter."
-                s_bijector = gb.InverseWhite(latent_gp=self.scale_gp, X_inducing=self.X_inducing)
-                s_prior = s_bijector(std_normal)
-                self.scale = Parameter(
-                    self.scale, s_bijector, s_prior, inversed_init=True, inversed_prior=inversed_prior
-                )
-            else:
-                self.scale = Parameter(self.scale, positive_bijector)
+        if self.flex_scale is False:
+            assert scale.shape == (), "scale must be a scalar."
+            self.scale = Parameter(scale, get_positive_bijector())
 
-    def __get_params__(self):
-        params = {"lengthscale": self.lengthscale, "scale": self.scale}
-        if self.flex_lengthscale:
-            params["lengthscale_gp"] = self.lengthscale._bijector.latent_gp.__get_params__()
-            params["X_inducing"] = self.lengthscale._bijector.X_inducing
-        if self.flex_scale:
-            params["scale_gp"] = self.scale._bijector.latent_gp.__get_params__()
-            params["X_inducing"] = self.scale._bijector.X_inducing
-
-        return params
-
-    def set_params(self, raw_params):
-        self.lengthscale.set(raw_params["lengthscale"])
-        self.scale.set(raw_params["scale"])
-        if self.flex_lengthscale:
-            self.lengthscale._bijector.latent_gp.set_params(raw_params["lengthscale_gp"])
-            self.lengthscale._bijector.X_inducing.set(raw_params["X_inducing"])
-
-        if self.flex_scale:
-            self.scale._bijector.latent_gp.set_params(raw_params["scale_gp"])
-            self.scale._bijector.X_inducing.set(raw_params["X_inducing"])
-
-    def call(self, X1, X2, train_mode=True):
+    @staticmethod
+    def per_dim_std_cov(X1, X2, ls1, ls2):
         dist_f = jax.vmap(squared_distance, in_axes=(None, 0))
         dist_f = jax.vmap(dist_f, in_axes=(0, None))
 
-        if self.flex_lengthscale:
-            positive_bijector = gb.get_positive_bijector()
-            X_inducing = self.lengthscale._bijector.X_inducing()
-            ls_inducing = self.lengthscale()
-            if self.method == "gp_neurips":
-                train_mode = False
-            if train_mode:
-                ls1 = ls_inducing
-                ls2 = ls1
-            else:
-                raw_ls_inducing = positive_bijector.inverse(ls_inducing)
-                ls1, ls2 = jtu.tree_map(
-                    lambda x: positive_bijector(
-                        self.lengthscale._bijector.latent_gp.predict(
-                            X_inducing,
-                            raw_ls_inducing,
-                            x,
-                            include_noise=False,
-                            return_cov=False,
-                            include_train_likelihood=False,
-                        )
-                    ),
-                    (X1, X2),
-                )
-            ls1, ls2 = ls1.reshape(-1, 1), ls2.reshape(-1, 1)  # 1D only
+        ls1, ls2 = ls1.reshape(-1, 1), ls2.reshape(-1, 1)  # 1D only
 
-            l_avg_square = (ls1**2 + ls2.T**2) / 2.0
-            prefix_part = jnp.sqrt(ls1 * ls2.T / l_avg_square)
+        l_avg_square = (ls1**2 + ls2.T**2) / 2.0
+        prefix_part = jnp.sqrt(ls1 * ls2.T / l_avg_square)
 
-            squared_dist = dist_f(X1, X2)
+        squared_dist = dist_f(X1, X2)
 
-            exp_part = jnp.exp(-squared_dist / (2.0 * l_avg_square))
+        exp_part = jnp.exp(-squared_dist / (2.0 * l_avg_square))
+        return prefix_part * exp_part
+
+    def get_kernel_fn(self, X_inducing: Parameter = None):
+        if isinstance(self, GibbsHeinonen):
+            X_inducing = jax.lax.stop_gradient(X_inducing())
         else:
-            prefix_part = 1.0
-            exp_part = jnp.exp(-dist_f(X1, X2) / (2.0 * self.lengthscale() ** 2))
+            X_inducing = X_inducing()
 
-        if self.flex_scale:
-            positive_bijector = gb.get_positive_bijector()
-            X_inducing = self.scale._bijector.X_inducing()
-            s_inducing = self.scale()
-            if self.method == "gp_neurips":
-                train_mode = False
+        def kernel_fn(X1, X2):
+            X1_slice, X2_slice, X_inducing_slice = self.slice_inputs(X1, X2, X_inducing)
 
-            if train_mode:
-                s1 = s_inducing
-                s2 = s1
+            #### Lengthscale ####
+            if self.flex_lengthscale:
+                if self.training:
+                    # X1 and X2 should be the same here
+                    ls1, log_ls_prior = self.ls_gp(X_inducing_slice, X1_slice)
+                    ls2 = ls1
+                else:
+                    ls1, ls2 = self.ls_gp(X_inducing_slice, X1_slice, X2_slice)
             else:
-                raw_s_inducing = positive_bijector.inverse(s_inducing)
-                s1, s2 = jtu.tree_map(
-                    lambda x: positive_bijector(
-                        self.scale._bijector.latent_gp.predict(
-                            X_inducing,
-                            raw_s_inducing,
-                            x,
-                            include_noise=False,
-                            return_cov=False,
-                            include_train_likelihood=False,
-                        )
-                    ),
-                    (X1, X2),
-                )
+                ls1 = self.lengthscale().reshape(1, -1).repeat(X1_slice.shape[0], axis=0).squeeze()
+                ls2 = ls1 = jnp.atleast_1d(ls1)
+
+            if self.ARD:
+                std_cov = jax.vmap(self.per_dim_std_cov, in_axes=(1, 1, 1, 1), out_axes=2)(
+                    X1_slice, X2_slice, ls1, ls2
+                ).prod(axis=2)
+            else:
+                std_cov = self.per_dim_std_cov(X1_slice, X2_slice, ls1, ls2)
+
+            #### Scale ####
+            if self.flex_scale:
+                if self.training:
+                    s1, log_s_prior = self.scale_gp(X_inducing_slice, X1_slice)
+                    s2 = s1
+                else:
+                    s1, s2 = self.scale_gp(X_inducing_slice, X1_slice, X2_slice)
+            else:
+                s1 = self.scale().reshape(1, 1).repeat(X1_slice.shape[0], axis=0).squeeze()
+                s2 = s1 = jnp.atleast_1d(s1)
+
             s1, s2 = s1.reshape(-1, 1), s2.reshape(-1, 1)  # 1D only
             variance = s1 * s2.T
-        else:
-            variance = self.scale() ** 2
 
-        return variance * prefix_part * exp_part
+            if self.training:
+                return variance * std_cov, log_ls_prior + log_s_prior
+            else:
+                return variance * std_cov
+
+        return kernel_fn
+
+
+class GibbsHeinonen(Gibbs):
+    def __init__(
+        self,
+        flex_lengthscale: bool = True,
+        flex_scale: bool = True,
+        lengthscale: float = 1.0,
+        scale: float = 1.0,
+        latent_lengthscale_ell: float = 1.0,
+        latent_scale_ell: float = 1.0,
+        latent_lengthscale_sigma: float = 1.0,
+        latent_scale_sigma: float = 1.0,
+        latent_kernel_type: Kernel = RBF,
+        X_inducing: Array = None,
+        active_dims: list = None,
+        ARD: bool = True,
+    ):
+        super(GibbsHeinonen, self).__init__(
+            flex_lengthscale, flex_scale, lengthscale, scale, X_inducing, active_dims, ARD
+        )
+
+        if self.flex_lengthscale:
+            self.ls_gp = LatentGPHeinonen(
+                X_inducing, latent_lengthscale_ell, latent_lengthscale_sigma, latent_kernel_type, vmap=ARD
+            )
+        if self.flex_scale:
+            self.scale_gp = LatentGPHeinonen(
+                X_inducing, latent_scale_ell, latent_scale_sigma, latent_kernel_type, vmap=False
+            )
+
+
+class GibbsDeltaInducing(Gibbs):
+    def __init__(
+        self,
+        flex_lengthscale: bool,
+        flex_scale: bool,
+        lengthscale: float = 1,
+        scale: float = 1,
+        latent_lengthscale_ell: float = 1.0,
+        latent_scale_ell: float = 1.0,
+        latent_lengthscale_sigma: float = 1.0,
+        latent_scale_sigma: float = 1.0,
+        latent_kernel_type: Kernel = RBF,
+        X_inducing: Array = None,
+        active_dims: list = None,
+        ARD: bool = True,
+    ):
+        super().__init__(flex_lengthscale, flex_scale, lengthscale, scale, X_inducing, active_dims, ARD)
+
+        if self.flex_lengthscale:
+            self.ls_gp = LatentGPDeltaInducing(
+                X_inducing, latent_lengthscale_ell, latent_lengthscale_sigma, latent_kernel_type, vmap=ARD
+            )
+        if self.flex_scale:
+            self.scale_gp = LatentGPDeltaInducing(
+                X_inducing, latent_scale_ell, latent_scale_sigma, latent_kernel_type, vmap=False
+            )

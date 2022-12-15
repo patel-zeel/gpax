@@ -7,26 +7,53 @@ import pytest
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
-from gpax.models import ExactGPRegression
-from gpax.kernels import RBF
-from gpax.likelihoods import Gaussian
-from gpax.means import Scalar
-from tests.utils import assert_same_pytree, assert_approx_same_pytree
-
-# from gpax.special_kernels import GibbsKernel
-from stheno.jax import EQ, GP, OneMean, PseudoObs
-import lab.jax as B
 
 # jax 64 bit mode
 jax.config.update("jax_enable_x64", True)
 
-key = jax.random.PRNGKey(0)
-keys = jax.random.split(key, 2)
-X = jax.random.normal(keys[0], (10, 3))
-y = jax.random.normal(keys[1], (10,))
+from gpax.models import LatentGPHeinonen, LatentGPDeltaInducing
 
-n_tests = 10
-keys = [key for key in jax.random.split(keys[-1], n_tests)]
+from gpax.models import ExactGPRegression
+from gpax.kernels import RBF
+from gpax.likelihoods import Gaussian
+from gpax.means import Scalar, Average
+from tests.utils import assert_same_pytree, assert_approx_same_pytree
+
+from stheno.jax import EQ, GP, OneMean, PseudoObs
+import lab.jax as B
+
+
+X_inducing = jax.random.uniform(jax.random.PRNGKey(0), (5, 3))
+X = jax.random.uniform(jax.random.PRNGKey(1), (10, 3))
+y = jax.random.normal(jax.random.PRNGKey(2), (10,))
+X_new = jax.random.uniform(jax.random.PRNGKey(3), (15, 3))
+
+
+@pytest.mark.parametrize("lgp_type", [LatentGPDeltaInducing, LatentGPHeinonen])
+@pytest.mark.parametrize(
+    "vmap, train_shapes, eval_shapes",
+    [
+        (False, [(X.shape[0],), ()], [(X.shape[0],), (X_new.shape[0],)]),
+        (True, [X.shape, (X.shape[1],)], [X.shape, X_new.shape]),
+    ],
+)
+def test_latent_gp(lgp_type, vmap, train_shapes, eval_shapes):
+    if lgp_type is LatentGPHeinonen:
+        X_inducing_tmp = X
+    else:
+        X_inducing_tmp = X_inducing
+    lgp = lgp_type(X=X_inducing_tmp, latent_kernel_type=RBF, vmap=vmap)
+    out_X, log_prior = lgp(X_inducing_tmp, X)
+    assert out_X.shape == train_shapes[0]
+    assert log_prior.shape == train_shapes[1]
+    lgp.eval()
+    out_X, out_X_new = lgp(X_inducing_tmp, X, X_new)
+    assert out_X.shape == eval_shapes[0]
+    assert out_X_new.shape == eval_shapes[1]
+
+
+n_tests = 5
+keys = [key for key in jax.random.split(jax.random.PRNGKey(10), n_tests)]
 
 
 def stheno_log_prob(params):
@@ -42,18 +69,18 @@ def test_init():
     scale = jnp.array(2.0)
     noise_scale = jnp.array(0.1)
 
-    kernel = RBF(input_dim=X.shape[1], lengthscale=ls, scale=scale)
+    kernel = RBF(X, lengthscale=ls, scale=scale)
     gp = ExactGPRegression(kernel=kernel, likelihood=Gaussian(scale=noise_scale), mean=Scalar())
 
-    values = gp.get_constrained_params()
+    values = gp.get_parameters()
     assert jnp.allclose(values["kernel"]["lengthscale"], ls)
     assert jnp.allclose(values["kernel"]["scale"], scale)
     assert jnp.allclose(values["likelihood"]["scale"], noise_scale)
 
-    raw_values = gp.get_params()
-    assert jnp.allclose(raw_values["kernel"]["lengthscale"], gp.kernel.lengthscale._bijector.inverse(ls))
-    assert jnp.allclose(raw_values["kernel"]["scale"], gp.kernel.scale._bijector.inverse(scale))
-    assert jnp.allclose(raw_values["likelihood"]["scale"], gp.likelihood.scale._bijector.inverse(noise_scale))
+    raw_values = gp.get_raw_parameters()
+    assert jnp.allclose(raw_values["kernel"]["lengthscale"], gp.kernel.lengthscale.bijector.inverse(ls))
+    assert jnp.allclose(raw_values["kernel"]["scale"], gp.kernel.scale.bijector.inverse(scale))
+    assert jnp.allclose(raw_values["likelihood"]["scale"], gp.likelihood.scale.bijector.inverse(noise_scale))
 
 
 @pytest.mark.parametrize("key", keys)
@@ -65,26 +92,26 @@ def test_init():
     ],
 )
 def test_exact_gp(key, kernel):
-    gp = ExactGPRegression(kernel=kernel(input_dim=X.shape[1]), likelihood=Gaussian(), mean=Scalar())
+    gp = ExactGPRegression(kernel=kernel(X), likelihood=Gaussian(), mean=Scalar())
     gp.initialize(key)
     log_prob = gp.log_probability(X, y)
 
-    params = gp.get_constrained_params()
+    params = gp.get_parameters()
     assert jnp.allclose(log_prob, stheno_log_prob(params), atol=1e-4)
 
     # jittable
     def neg_log_prob(raw_params):
-        gp = ExactGPRegression(kernel=kernel(input_dim=X.shape[1]), likelihood=Gaussian(), mean=Scalar())
-        gp.set_params(raw_params)
+        gp = ExactGPRegression(kernel=kernel(X), likelihood=Gaussian(), mean=Scalar())
+        gp.set_parameters(raw_params)
         return -gp.log_probability(X, y)
 
     def neg_log_prob_stheno(raw_params):
-        gp = ExactGPRegression(kernel=kernel(input_dim=X.shape[1]), likelihood=Gaussian(), mean=Scalar())
-        gp.set_params(raw_params)
-        params = gp.get_constrained_params()
+        gp = ExactGPRegression(kernel=kernel(X), likelihood=Gaussian(), mean=Scalar())
+        gp.set_parameters(raw_params)
+        params = gp.get_parameters()
         return -stheno_log_prob(params)
 
-    raw_params = gp.get_params()
+    raw_params = gp.get_parameters()
     grads = jax.jit(jax.grad(neg_log_prob))(raw_params)
     grads_stheno = jax.jit(jax.grad(neg_log_prob_stheno))(raw_params)
     assert_approx_same_pytree(grads, grads_stheno)
