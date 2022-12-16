@@ -160,10 +160,11 @@ class Module:
         jtu.tree_map(lambda param, value: param.set_value(value), raw_params, params, is_leaf=is_parameter)
 
     def initialize(self, key):
-        params = self.get_raw_parameters(raw_dict=False)
-        flat_params, _ = jtu.tree_flatten(params, is_leaf=is_parameter)
+        param_objects = self.get_raw_parameters(raw_dict=False)
+        flat_params, _ = jtu.tree_flatten(param_objects, is_leaf=is_parameter)
         seeds = [seed for seed in jax.random.split(key, len(flat_params))]
         jtu.tree_map(lambda seed, param: param.initialize(seed), seeds, flat_params)
+        return self.get_raw_parameters(raw_dict=True)
 
     def log_prior(self):
         params = self.raw_parameters(raw_dict=False)

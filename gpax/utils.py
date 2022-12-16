@@ -53,6 +53,7 @@ def train_fn(loss_fn, init_raw_params, optimizer, n_iters=1, lax_scan=True):
     if lax_scan:
         value_and_grad_fn = jax.value_and_grad(loss_fn)
 
+        @jax.jit
         def step(raw_params_and_state, aux):
             raw_params, state = raw_params_and_state
             loss, grads = value_and_grad_fn(raw_params)

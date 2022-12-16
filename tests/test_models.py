@@ -12,8 +12,8 @@ import jax.tree_util as jtu
 jax.config.update("jax_enable_x64", True)
 
 from gpax.models import LatentGPHeinonen, LatentGPDeltaInducing
-
-from gpax.models import ExactGPRegression
+from gpax.core import set_default_jitter, get_default_jitter
+from gpax.models import ExactGPRegression, SparseGPRegression
 from gpax.kernels import RBF
 from gpax.likelihoods import Gaussian
 from gpax.means import Scalar, Average
@@ -117,30 +117,31 @@ def test_exact_gp(key, kernel):
     assert_approx_same_pytree(grads, grads_stheno)
 
 
-# @pytest.mark.parametrize("seed", list(range(5)))
-# def test_sparse_gp_log_prob(seed):
-#     jnp.jitter = B.epsilon
-#     key = jax.random.PRNGKey(seed)
-#     X = jax.random.normal(key, (10, 1))
-#     key = jax.random.split(key, 1)[0]
-#     y = jax.random.normal(key, (10,))
-#     key = jax.random.split(key, 1)[0]
-#     X_inducing = jax.random.normal(key, (5, 1))
-#     gp = SparseGP(X_inducing=X_inducing)
-#     params = gp.initialize_params(key, X=X, X_inducing=X_inducing)
+@pytest.mark.parametrize("seed", list(range(5)))
+def test_sparse_gp_log_prob(seed):
+    set_default_jitter(B.epsilon)
+    key = jax.random.PRNGKey(seed)
+    X = jax.random.normal(key, (10, 1))
+    key = jax.random.split(key, 1)[0]
+    y = jax.random.normal(key, (10,))
+    key = jax.random.split(key, 1)[0]
+    X_inducing = jax.random.normal(key, (5, 1))
+    gp = SparseGPRegression(RBF(X), Gaussian(), Scalar(), X_inducing)
+    gp.initialize(key)
+    params = gp.get_parameters()
 
-#     stheno_gp = GP(
-#         params["mean"]["value"] * OneMean(),
-#         params["kernel"]["variance"] * EQ().stretch(params["kernel"]["lengthscale"]),
-#     )
+    stheno_gp = GP(
+        params["mean"]["value"] * OneMean(),
+        params["kernel"]["scale"] ** 2 * EQ().stretch(params["kernel"]["lengthscale"]),
+    )
 
-#     stheno_log_prob = -PseudoObs(stheno_gp(X_inducing), (stheno_gp(X, params["noise"]["variance"]), y)).elbo(
-#         stheno_gp.measure
-#     )
+    stheno_log_prob = PseudoObs(stheno_gp(X_inducing), (stheno_gp(X, params["likelihood"]["scale"] ** 2), y)).elbo(
+        stheno_gp.measure
+    )
 
-#     log_prob = gp.log_probability(params, X, y)
+    log_prob = gp.log_probability(X, y)
 
-#     assert jnp.allclose(log_prob, stheno_log_prob)
+    assert jnp.allclose(log_prob, stheno_log_prob)
 
 
 # @pytest.mark.parametrize("seed", list(range(5)))

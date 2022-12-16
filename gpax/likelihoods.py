@@ -6,9 +6,11 @@ import jax.tree_util as jtu
 from gpax.core import Parameter, get_positive_bijector
 from jaxtyping import Array, Float
 
-from gpax.core import Module
+from gpax.core import Module, get_default_jitter
 from gpax.models import LatentGPHeinonen, LatentGPDeltaInducing
 from gpax.kernels import RBF
+from gpax.means import Average
+from gpax.utils import add_to_diagonal
 
 
 class Likelihood(Module):
@@ -34,56 +36,35 @@ class Gaussian(Likelihood):
             return self.scale.get_value()
 
 
-class Heteroscedastic(Likelihood):
+class HeteroscedasticHeinonen(Likelihood):
     def __init__(
         self,
         X_inducing: Array,
-        latent_lengthscale: Float[Array, "1"] = 1.0,
-        latent_scale: Float[Array, "1"] = 1.0,
+        latent_gp_lengthscale: Float[Array, "1"] = 1.0,
+        latent_gp_scale: Float[Array, "1"] = 1.0,
         latent_kernel_type: type = RBF,
     ):
-        super(Heteroscedastic, self).__init__()
-        self.latent_gp = self.latent_gp_type(
-            X=X_inducing,
-            lengthscale=latent_lengthscale,
-            scale=latent_scale,
-            latent_kernel_type=latent_kernel_type,
-            vmap=False,
+        super(HeteroscedasticHeinonen, self).__init__()
+        self.latent_gp = LatentGPHeinonen(
+            X_inducing, latent_gp_lengthscale, latent_gp_scale, latent_kernel_type, vmap=False
         )
 
-    def get_likelihood_fn(self, X_inducing: Parameter = None):
-        if isinstance(self, HeteroscedasticHeinonen):
-            X_inducing = jax.lax.stop_gradient(X_inducing())
-        else:
-            X_inducing = X_inducing()
-
-        def likelihood_fn(X, X_new=None):
-            return self.latent_gp(X_inducing, X, X_new)
-
-        return likelihood_fn
+    def get_likelihood_fn(self, X_inducing: Array = None):
+        return self.latent_gp(X_inducing)
 
 
-class HeteroscedasticHeinonen(Heteroscedastic):
+class HeteroscedasticDeltaInducing(Likelihood):
     def __init__(
         self,
         X_inducing: Array,
-        latent_lengthscale: Float[Array, "1"] = 1.0,
-        latent_scale: Float[Array, "1"] = 1.0,
+        latent_gp_lengthscale: Float[Array, "1"] = 1.0,
+        latent_gp_scale: Float[Array, "1"] = 1.0,
         latent_kernel_type: type = RBF,
     ):
-        self.latent_gp_type = LatentGPHeinonen
-        super(HeteroscedasticHeinonen, self).__init__(X_inducing, latent_lengthscale, latent_scale, latent_kernel_type)
-
-
-class HeteroscedasticDeltaInducing(Heteroscedastic):
-    def __init__(
-        self,
-        X_inducing: Array,
-        latent_lengthscale: Float[Array, "1"] = 1.0,
-        latent_scale: Float[Array, "1"] = 1.0,
-        latent_kernel_type: type = RBF,
-    ):
-        self.latent_gp_type = LatentGPDeltaInducing
-        super(HeteroscedasticDeltaInducing, self).__init__(
-            X_inducing, latent_lengthscale, latent_scale, latent_kernel_type
+        super(HeteroscedasticDeltaInducing, self).__init__()
+        self.latent_gp = LatentGPDeltaInducing(
+            X_inducing, latent_gp_lengthscale, latent_gp_scale, latent_kernel_type, vmap=False
         )
+
+    def get_likelihood_fn(self, X_inducing: Array = None):
+        return self.latent_gp(X_inducing)

@@ -225,28 +225,26 @@ class Gibbs(Kernel):
         exp_part = jnp.exp(-squared_dist / (2.0 * l_avg_square))
         return prefix_part * exp_part
 
-    def get_kernel_fn(self, X_inducing: Parameter = None):
-        if isinstance(self, GibbsHeinonen):
-            X_inducing = jax.lax.stop_gradient(X_inducing())
-        else:
-            X_inducing = X_inducing()
-
+    def get_kernel_fn(self, X_inducing: Array = None):
         def kernel_fn(X1, X2):
             X1_slice, X2_slice, X_inducing_slice = self.slice_inputs(X1, X2, X_inducing)
+            ls_gp_fn = self.ls_gp(X_inducing_slice)
+            scale_gp_fn = self.scale_gp(X_inducing_slice)
 
             #### Lengthscale ####
             if self.flex_lengthscale:
                 if self.training:
                     # X1 and X2 should be the same here
-                    ls1, log_ls_prior = self.ls_gp(X_inducing_slice, X1_slice)
+                    ls1, log_ls_prior = ls_gp_fn(X1_slice)
                     ls2 = ls1
                 else:
-                    ls1, ls2 = self.ls_gp(X_inducing_slice, X1_slice, X2_slice)
+                    ls1, ls2 = ls_gp_fn(X1_slice), ls_gp_fn(X2_slice)
             else:
                 ls1 = self.lengthscale().reshape(1, -1).repeat(X1_slice.shape[0], axis=0).squeeze()
                 ls2 = ls1 = jnp.atleast_1d(ls1)
 
             if self.ARD:
+                # print(X1_slice.shape, X2_slice.shape, ls1.shape, ls2.shape)
                 std_cov = jax.vmap(self.per_dim_std_cov, in_axes=(1, 1, 1, 1), out_axes=2)(
                     X1_slice, X2_slice, ls1, ls2
                 ).prod(axis=2)
@@ -256,10 +254,10 @@ class Gibbs(Kernel):
             #### Scale ####
             if self.flex_scale:
                 if self.training:
-                    s1, log_s_prior = self.scale_gp(X_inducing_slice, X1_slice)
+                    s1, log_s_prior = scale_gp_fn(X1_slice)
                     s2 = s1
                 else:
-                    s1, s2 = self.scale_gp(X_inducing_slice, X1_slice, X2_slice)
+                    s1, s2 = scale_gp_fn(X1_slice), scale_gp_fn(X2_slice)
             else:
                 s1 = self.scale().reshape(1, 1).repeat(X1_slice.shape[0], axis=0).squeeze()
                 s2 = s1 = jnp.atleast_1d(s1)

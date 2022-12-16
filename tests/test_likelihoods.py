@@ -27,7 +27,7 @@ def test_gaussian():
     assert_same_pytree(params, {"scale": 1.0})
 
     likelihood_fn = likelihood.get_likelihood_fn()
-    scale = likelihood_fn(X)
+    scale, log_prior = likelihood_fn(X)
     assert scale == 1.0
 
 
@@ -47,7 +47,7 @@ def test_heteroscedastic(likelihood_type):
         },
     )
 
-    X_inducing_p = Parameter(X_inducing_tmp)
+    X_inducing_p = Parameter(X_inducing_tmp, fixed_init=True)
     likelihood_fn = likelihood.get_likelihood_fn(X_inducing_p)
     scale, log_prior = likelihood_fn(X)
     assert scale.shape == (X.shape[0],)
