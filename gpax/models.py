@@ -11,7 +11,7 @@ tfb = tfp.bijectors
 tfd = tfp.distributions
 
 from gpax.core import Module, Parameter, get_default_jitter, get_positive_bijector
-from gpax.utils import add_to_diagonal, get_a_inv_b, train_fn, repeat_to_size
+from gpax.utils import add_to_diagonal, get_a_inv_b, repeat_to_size
 
 from jaxtyping import Array, Float
 from typing import TYPE_CHECKING
@@ -21,33 +21,61 @@ if TYPE_CHECKING:
     from gpax.likelihoods import Likelihood
     from gpax.means import Mean
 
+is_parameter = lambda x: isinstance(x, Parameter)
+
 
 class Model(Module):
     pass
 
 
-class LatentGPHeinonen(Model):
+class LatentModel(Model):
+    pass
+
+
+class LatentGP(LatentModel):
     def __init__(
         self,
-        X_inducing,
-        lengthscale: float = 1.0,
-        scale: float = 1.0,
-        latent_kernel_type: Kernel = None,
+        X_inducing: Array,
+        kernel: Kernel,
         vmap: bool = False,
-        hyperparams_trainable: bool = False,
     ):
-        super(LatentGPHeinonen, self).__init__()
+        super(LatentGP, self).__init__()
         self.vmap = vmap
+        self.X_inducing = X_inducing
 
-        self.kernel = latent_kernel_type(X_inducing, lengthscale=lengthscale, scale=scale, ARD=True)
-        self.kernel.lengthscale.trainable = hyperparams_trainable
-        self.kernel.scale.trainable = hyperparams_trainable
+        self.kernel = kernel
 
         if self.vmap:
             self.latent = Parameter(jnp.ones(X_inducing.shape))
         else:
             self.latent = Parameter(jnp.ones(X_inducing.shape[0]))
 
+    def reverse_init_latent(self, value):
+        pos_bijector = get_positive_bijector()
+        kernel_fn = self.kernel.eval().get_kernel_fn()
+
+        def out_vmap_fn(X_inducing, raw_value):
+            cov = kernel_fn(X_inducing, X_inducing)
+            noisy_cov = add_to_diagonal(cov, 0.0, get_default_jitter())
+            chol = jnp.linalg.cholesky(noisy_cov)
+            latent = jsp.linalg.solve_triangular(chol, raw_value, lower=True)
+            # latent = jnp.linalg.solve(chol, raw_value)
+            return latent
+
+        assert value.size == 1
+        value = jnp.ones(self.latent().shape) * value
+        raw_value = pos_bijector.inverse(value)
+
+        if self.vmap:
+            out_vmap_fn = jax.vmap(out_vmap_fn, in_axes=(1, 1), out_axes=1)
+            latent = out_vmap_fn(self.X_inducing[..., None], raw_value)
+            self.latent.set_raw_value(latent)
+        else:
+            latent = out_vmap_fn(self.X_inducing, raw_value)
+            self.latent.set_raw_value(latent)
+
+
+class LatentGPHeinonen(LatentGP):
     def __call__(self, X_inducing):
         X_inducing = jax.lax.stop_gradient(X_inducing)
         pos_bijector = get_positive_bijector()
@@ -61,10 +89,10 @@ class LatentGPHeinonen(Model):
             return log_fx, chol
 
         if self.vmap:
-            X_inducing = X_inducing[..., None]
             out_vmap_fn = jax.vmap(out_vmap_fn, in_axes=(1, 1), out_axes=(1, 2))
-
-        log_fx, chol = out_vmap_fn(X_inducing, self.latent())
+            log_fx, chol = out_vmap_fn(X_inducing[..., None], self.latent())
+        else:
+            log_fx, chol = out_vmap_fn(X_inducing, self.latent())
 
         def predict_fn(X):
             if self.training:
@@ -94,28 +122,7 @@ class LatentGPHeinonen(Model):
         return predict_fn
 
 
-class LatentGPDeltaInducing(Model):
-    def __init__(
-        self,
-        X_inducing,
-        lengthscale: float = 1.0,
-        scale: float = 1.0,
-        latent_kernel_type: Kernel = None,
-        vmap: bool = False,
-        hyperparams_trainable: bool = False,
-    ):
-        super(LatentGPDeltaInducing, self).__init__()
-        self.vmap = vmap
-
-        self.kernel = latent_kernel_type(X_inducing, lengthscale=lengthscale, scale=scale, ARD=True)
-        self.kernel.lengthscale.trainable = hyperparams_trainable
-        self.kernel.scale.trainable = hyperparams_trainable
-
-        if self.vmap:
-            self.latent = Parameter(jnp.ones(X_inducing.shape))
-        else:
-            self.latent = Parameter(jnp.ones(X_inducing.shape[0]))
-
+class LatentGPDeltaInducing(LatentGP):
     def __call__(self, X_inducing):
         pos_bijector = get_positive_bijector()
         kernel_fn = self.kernel.eval().get_kernel_fn()
@@ -128,10 +135,10 @@ class LatentGPDeltaInducing(Model):
             return log_fx, chol
 
         if self.vmap:
-            X_inducing = X_inducing[..., None]
             out_vmap_fn = jax.vmap(out_vmap_fn, in_axes=(1, 1), out_axes=(1, 2))
-
-        log_fx, chol = out_vmap_fn(X_inducing, self.latent())
+            log_fx, chol = out_vmap_fn(X_inducing[..., None], self.latent())
+        else:
+            log_fx, chol = out_vmap_fn(X_inducing, self.latent())
 
         def predict_fn(X):
             if self.training:
@@ -145,8 +152,10 @@ class LatentGPDeltaInducing(Model):
                     return fx, log_prior
 
                 if self.vmap:
-                    X = X[..., None]
                     in_vmap_fn = jax.vmap(in_vmap_fn, in_axes=(1, 1, 2), out_axes=(1, 0))
+                    return in_vmap_fn(X[..., None], log_fx, chol)
+                return in_vmap_fn(X, log_fx, chol)
+
             else:
 
                 def in_vmap_fn(x, log_fx, chol):
@@ -156,107 +165,11 @@ class LatentGPDeltaInducing(Model):
                     return pos_bijector(mean + cross_cov @ alpha)
 
                 if self.vmap:
-                    X = X[..., None]
                     in_vmap_fn = jax.vmap(in_vmap_fn, in_axes=(1, 1, 2), out_axes=1)
-
-            return in_vmap_fn(X, log_fx, chol)
+                    return in_vmap_fn(X[..., None], log_fx, chol)
+                return in_vmap_fn(X, log_fx, chol)
 
         return predict_fn
-
-
-# class LatentGP(Model):
-#     def __init__(
-#         self,
-#         X: Float[Array, "N D"],
-#         lengthscale: float = 1.0,
-#         scale: float = 1.0,
-#         latent_kernel_type: Kernel = None,
-#         vmap: bool = False,
-#     ):
-#         super(LatentGP, self).__init__()
-#         self.latent_kernel_type = latent_kernel_type
-#         self.vmap = vmap
-
-#         self.lengthscale = Parameter(jnp.array(lengthscale).repeat(X.shape[1]), get_positive_bijector())
-#         if self.vmap is False:
-#             self.latent = Parameter(jnp.zeros(X.shape[0]))
-#             self.scale = Parameter(scale, get_positive_bijector())
-#         else:
-#             self.latent = Parameter(jnp.zeros(X.shape))
-#             self.scale = Parameter(jnp.ones(X.shape[1]), get_positive_bijector())
-
-#     def common(self, ls, scale, latent, X):
-#         kernel = self.latent_kernel_type(X=X, ARD=True, lengthscale=ls, scale=scale).eval().get_kernel_fn()
-#         cov = kernel(X, X)
-#         noisy_cov = add_to_diagonal(cov, 0.0, get_default_jitter())
-#         chol = jnp.linalg.cholesky(noisy_cov)
-#         log_fx = chol @ latent
-#         return log_fx, chol, kernel
-
-#     def __call__(self, X_inducing, X, X_new=None):
-#         if self.vmap is False:
-#             return self.vmap_fn(self.lengthscale(), self.scale(), self.latent(), X_inducing, X, X_new)
-#         else:
-#             if self.training:
-#                 return jax.vmap(self.vmap_fn, in_axes=(0, 0, 1, 1, 1), out_axes=(1, 0))(
-#                     self.lengthscale(),
-#                     self.scale(),
-#                     self.latent(),
-#                     X_inducing[..., None],
-#                     X[..., None],
-#                 )
-#             else:
-#                 return jax.vmap(self.vmap_fn, in_axes=(0, 0, 1, 1, 1, 1), out_axes=(1, 1))(
-#                     self.lengthscale(),
-#                     self.scale(),
-#                     self.latent(),
-#                     X_inducing[..., None],
-#                     X[..., None],
-#                     X_new[..., None],
-#                 )
-
-
-# class LatentGPHeinonen(LatentGP):
-#     def vmap_fn(self, ls, scale, latent, X_inducing, X, X_new=None):
-#         # X_inducing and X must be same in this method
-#         positive_bijector = get_positive_bijector()
-
-#         log_fx, chol, kernel = self.common(ls, scale, latent, X_inducing)
-#         fx = positive_bijector(log_fx)
-#         if self.training:
-#             log_prior = tfd.MultivariateNormalTriL(loc=log_fx.mean(), scale_tril=chol).log_prob(log_fx)
-#             return fx, log_prior
-#         else:
-
-#             def predict_fn(x):
-#                 cross_cov = kernel(x, X_inducing)
-#                 alpha = jsp.linalg.cho_solve((chol, True), log_fx)
-#                 fx_new = positive_bijector(cross_cov @ alpha)
-#                 return fx_new
-
-#             fx = predict_fn(X)
-#             fx_new = predict_fn(X_new)
-#             return fx, fx_new
-
-
-# class LatentGPDeltaInducing(LatentGP):
-#     def vmap_fn(self, ls, scale, latent, X_inducing, X, X_new=None):
-#         positive_bijector = get_positive_bijector()
-#         log_fx_inducing, chol_inducing, kernel = self.common(ls, scale, latent, X_inducing)
-#         cross_cov = kernel(X, X_inducing)
-#         alpha = jsp.linalg.cho_solve((chol_inducing, True), log_fx_inducing)
-#         log_fx = cross_cov @ alpha
-#         fx = positive_bijector(log_fx)
-#         if self.training:
-#             fx = positive_bijector(log_fx)
-#             log_prior = tfd.MultivariateNormalTriL(loc=log_fx_inducing.mean(), scale_tril=chol_inducing).log_prob(
-#                 log_fx_inducing
-#             )
-#             return fx, log_prior
-#         else:
-#             cross_cov_new = kernel(X_new, X_inducing)
-#             fx_new = positive_bijector(cross_cov_new @ alpha)
-#             return fx, fx_new
 
 
 class ExactGPRegression(Model):
@@ -287,13 +200,24 @@ class ExactGPRegression(Model):
         likelihood_fn = self.likelihood.get_likelihood_fn(X_inducing)
 
         covariance, log_prior_kernel = kernel_fn(X, X)
+
         noise_scale, log_prior_likelihood = likelihood_fn(X)
-        noisy_covariance = add_to_diagonal(covariance, noise_scale**2, get_default_jitter())
+        noisy_covariance = add_to_diagonal(covariance, noise_scale**2, 0.0)
 
-        log_likelihood = tfd.MultivariateNormalFullCovariance(
-            loc=self.mean(y=y), covariance_matrix=noisy_covariance
-        ).log_prob(y)
+        # log_likelihood = tfd.MultivariateNormalFullCovariance(
+        #     loc=self.mean(y=y), covariance_matrix=noisy_covariance
+        # ).log_prob(y)
 
+        y_bar = y - self.mean(y=y)
+        k_inv_y, k_cholesky = get_a_inv_b(noisy_covariance, y_bar, return_cholesky=True)
+        log_likelihood = (
+            -0.5 * (y_bar.ravel() * k_inv_y.ravel()).sum()  # This will break for multi-dimensional y
+            - jnp.log(k_cholesky.diagonal()).sum()
+            - 0.5 * y.shape[0] * jnp.log(2 * jnp.pi)
+        )
+        # print(
+        #     f"{log_likelihood=:.20f}, {log_prior_likelihood=}, total={log_likelihood + log_prior_kernel + log_prior_likelihood}"
+        # )  # DEBUG
         return log_likelihood + log_prior_kernel + log_prior_likelihood
 
     def condition(self, X, y):
@@ -312,7 +236,7 @@ class ExactGPRegression(Model):
 
         mean = self.mean(y=y)
         y_bar = y - mean
-        noisy_covariance = add_to_diagonal(train_cov, noise_scale**2, get_default_jitter())
+        noisy_covariance = add_to_diagonal(train_cov, noise_scale**2, 0.0)
         k_inv_y, k_cholesky = get_a_inv_b(noisy_covariance, y_bar, return_cholesky=True)
 
         def predict_fn(X_test, return_cov=True, include_noise=True):
@@ -323,7 +247,7 @@ class ExactGPRegression(Model):
                 k_inv_k_star = jsp.linalg.cho_solve((k_cholesky, True), K_star.T)
                 pred_cov = kernel_fn(X_test, X_test) - (K_star @ k_inv_k_star)
                 if include_noise:
-                    pred_cov = add_to_diagonal(pred_cov, likelihood_fn(X_test) ** 2, get_default_jitter())
+                    pred_cov = add_to_diagonal(pred_cov, likelihood_fn(X_test) ** 2, 0.0)
                 return pred_mean, pred_cov
             else:
                 return pred_mean

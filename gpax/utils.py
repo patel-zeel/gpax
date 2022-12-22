@@ -7,6 +7,52 @@ import optax
 distance_jitter = 0.0
 
 
+class DataScaler:
+    def __init__(self, X, y):
+        self.X_min = X.min(axis=0)
+        self.X_scale = X.max(axis=0) - self.X_min
+        self.y_mean = y.mean()
+        self.y_scale = jnp.max(jnp.abs(y - self.y_mean))
+
+    def transform(self, X=None, y=None, ell=None, sigma=None, omega=None):
+        res = []
+        if X is not None:
+            fn = lambda x: (x - self.X_min) / self.X_scale
+            res.append(jtu.tree_map(fn, X))
+        if y is not None:
+            fn = lambda x: (x - self.y_mean) / self.y_scale
+            res.append(jtu.tree_map(fn, y))
+        if ell is not None:
+            fn = lambda x: x / self.X_scale
+            res.append(jtu.tree_map(fn, ell))
+        if sigma is not None:
+            fn = lambda x: x / self.y_scale
+            res.append(jtu.tree_map(fn, sigma))
+        if omega is not None:
+            fn = lambda x: x / self.y_scale
+            res.append(jtu.tree_map(fn, omega))
+        return res
+
+    def inverse_transform(self, X=None, y=None, ell=None, sigma=None, omega=None):
+        res = []
+        if X is not None:
+            fn = lambda x: x * self.X_scale + self.X_min
+            res.append(jtu.tree_map(fn, X))
+        if y is not None:
+            fn = lambda x: x * self.y_scale + self.y_mean
+            res.append(jtu.tree_map(fn, y))
+        if ell is not None:
+            fn = lambda x: x * self.X_scale
+            res.append(jtu.tree_map(fn, ell))
+        if sigma is not None:
+            fn = lambda x: x * self.y_scale
+            res.append(jtu.tree_map(fn, sigma))
+        if omega is not None:
+            fn = lambda x: x * self.y_scale
+            res.append(jtu.tree_map(fn, omega))
+        return res
+
+
 def repeat_to_size(value, size):
     if value.size == 1:
         return jnp.repeat(value, size)

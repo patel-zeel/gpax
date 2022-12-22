@@ -7,4 +7,7 @@ __pycache__/
 __pycache__
 build
 gpax/_version.py
-*wdt.py  # "Will Delete This" file
+
+# "Will Delete This" files
+*wdt.py
+*wdt.ipynb

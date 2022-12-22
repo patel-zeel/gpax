@@ -7,7 +7,7 @@ from gpax.core import Parameter, get_positive_bijector
 from jaxtyping import Array, Float
 
 from gpax.core import Module, get_default_jitter
-from gpax.models import LatentGPHeinonen, LatentGPDeltaInducing
+from gpax.models import LatentModel
 from gpax.kernels import RBF
 from gpax.means import Average
 from gpax.utils import add_to_diagonal
@@ -36,35 +36,13 @@ class Gaussian(Likelihood):
             return self.scale.get_value()
 
 
-class HeteroscedasticHeinonen(Likelihood):
+class Heteroscedastic(Likelihood):
     def __init__(
         self,
-        X_inducing: Array,
-        latent_gp_lengthscale: Float[Array, "1"] = 1.0,
-        latent_gp_scale: Float[Array, "1"] = 1.0,
-        latent_kernel_type: type = RBF,
+        latent_model: LatentModel,
     ):
-        super(HeteroscedasticHeinonen, self).__init__()
-        self.latent_gp = LatentGPHeinonen(
-            X_inducing, latent_gp_lengthscale, latent_gp_scale, latent_kernel_type, vmap=False
-        )
+        super(Heteroscedastic, self).__init__()
+        self.latent_model = latent_model
 
     def get_likelihood_fn(self, X_inducing: Array = None):
-        return self.latent_gp(X_inducing)
-
-
-class HeteroscedasticDeltaInducing(Likelihood):
-    def __init__(
-        self,
-        X_inducing: Array,
-        latent_gp_lengthscale: Float[Array, "1"] = 1.0,
-        latent_gp_scale: Float[Array, "1"] = 1.0,
-        latent_kernel_type: type = RBF,
-    ):
-        super(HeteroscedasticDeltaInducing, self).__init__()
-        self.latent_gp = LatentGPDeltaInducing(
-            X_inducing, latent_gp_lengthscale, latent_gp_scale, latent_kernel_type, vmap=False
-        )
-
-    def get_likelihood_fn(self, X_inducing: Array = None):
-        return self.latent_gp(X_inducing)
+        return self.latent_model(X_inducing)

@@ -4,7 +4,16 @@ os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 import jax
 import jax.numpy as jnp
-from gpax.core import Module, Parameter, get_default_prior, set_default_prior, get_default_jitter, set_default_jitter
+from gpax.core import (
+    Module,
+    Parameter,
+    get_default_prior,
+    set_default_prior,
+    get_default_jitter,
+    set_default_jitter,
+    set_positive_bijector,
+    get_positive_bijector,
+)
 from tests.utils import assert_same_pytree
 
 import tensorflow_probability.substrates.jax as tfp
@@ -14,12 +23,23 @@ tfd = tfp.distributions
 
 import pytest
 
+jax.config.update("jax_enable_x64", True)
+
 
 def test_default_jitter():
     jitter = get_default_jitter()
     assert jitter == 1e-6
     set_default_jitter(1e-3)
     assert get_default_jitter() == 1e-3
+
+
+def test_positive_bijector():
+    cached_positive_bijector = get_positive_bijector()
+
+    set_positive_bijector(tfb.Exp())
+    assert isinstance(get_positive_bijector(), tfb.Exp)
+
+    set_positive_bijector(cached_positive_bijector)
 
 
 def test_default_prior():
@@ -45,12 +65,12 @@ def test_default_prior():
 @pytest.mark.parametrize("prior", [None, tfd.Normal(loc=0.0, scale=1.0), tfd.Gamma(concentration=1.0, rate=1.0)])
 def test_parameter(value, bijector, prior):
     p = Parameter(value, bijector=bijector, prior=prior)
-    assert jnp.alltrue(p() == jnp.asarray(value))
+    assert jnp.allclose(p(), jnp.asarray(value))
 
     if bijector is None:
         bijector = tfb.Identity()
 
-    assert jnp.alltrue(p.get_raw_value() == bijector.inverse(jnp.asarray(value)))
+    assert jnp.allclose(p.get_raw_value(), bijector.inverse(jnp.asarray(value)))
 
     if prior is None:
         assert p.log_prior().sum() == 0.0

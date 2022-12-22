@@ -61,14 +61,20 @@ class Parameter:
     ):
         self.bijector = bijector if bijector is not None else tfb.Identity()
         self.prior = prior
-        self.trainable = trainable
+        self._trainable = trainable
         self.fixed_init = fixed_init  # if True, the value is not changed during initialization
+        self._shape = jnp.asarray(value).shape
         self._raw_value = self.bijector.inverse(jnp.asarray(value))
+        self._raw_shape = self._raw_value.shape
 
     def get_value(self):
-        if self.trainable is False:
+        if self._trainable is False:
             self._raw_value = jax.lax.stop_gradient(self._raw_value)
         return self.bijector(self._raw_value)
+
+    def trainable(self, is_trainable: bool = True):
+        self._trainable = is_trainable
+        return self
 
     def __call__(self):  # for convenience
         return self.get_value()
@@ -77,19 +83,21 @@ class Parameter:
         return self._raw_value
 
     def set_raw_value(self, raw_value):
+        assert raw_value.shape == self._raw_shape
         self._raw_value = jnp.array(raw_value)
 
     def set_value(self, value):
+        assert jnp.asarray(value).shape == self._shape
         self._raw_value = self.bijector.inverse(jnp.asarray(value))
 
     def initialize(self, key):
-        if self.fixed_init or self.trainable is False:
+        if self.fixed_init or self._trainable is False:
             return
         elif self.prior is None:
             self._raw_value = get_default_prior().sample(self._raw_value.shape, key)
         else:
-            raw_prior = tfb.Invert(self.bijector)(self.prior)
-            self._raw_value = raw_prior.sample(self._raw_value.shape, key)
+            value = self.prior.sample(self._shape, key)
+            self._raw_value = self.bijector.inverse(value)
 
     def log_prior(self):
         if self.prior is None or (self.trainable is False):
@@ -113,6 +121,13 @@ class Module:
         self.training = False
         for module in self.modules():
             module.eval()
+        return self
+
+    def trainable(self, is_trainable: bool = True):
+        for param in self._parameters.values():
+            param.trainable(is_trainable)
+        for module in self.modules():
+            module.trainable(is_trainable)
         return self
 
     def __setattr__(self, key, val):
