@@ -7,12 +7,17 @@ import optax
 distance_jitter = 0.0
 
 
+def index_pytree(pytree, index):
+    return jtu.tree_map(lambda x: x[index], pytree)
+
+
 class DataScaler:
-    def __init__(self, X, y):
+    def __init__(self, X, y=None):
         self.X_min = X.min(axis=0)
         self.X_scale = X.max(axis=0) - self.X_min
-        self.y_mean = y.mean()
-        self.y_scale = jnp.max(jnp.abs(y - self.y_mean))
+        if y is not None:
+            self.y_mean = y.mean()
+            self.y_scale = jnp.max(jnp.abs(y - self.y_mean))
 
     def transform(self, X=None, y=None, ell=None, sigma=None, omega=None):
         res = []

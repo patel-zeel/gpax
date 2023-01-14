@@ -73,9 +73,9 @@ def test_parameter(value, bijector, prior):
     assert jnp.allclose(p.get_raw_value(), bijector.inverse(jnp.asarray(value)))
 
     if prior is None:
-        assert p.log_prior().sum() == 0.0
+        assert p.log_prob().sum() == 0.0
     else:
-        assert p.log_prior().sum() == prior.log_prob(value).sum()
+        assert p.log_prob().sum() == prior.log_prob(value).sum()
 
 
 def test_module():

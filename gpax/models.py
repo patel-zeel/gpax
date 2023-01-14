@@ -62,8 +62,11 @@ class LatentGP(LatentModel):
             # latent = jnp.linalg.solve(chol, raw_value)
             return latent
 
-        assert value.size == 1
-        value = jnp.ones(self.latent().shape) * value
+        assert value.size in (1, self.latent().size)
+        if value.size == 1:
+            value = jnp.ones(self.latent().shape) * value
+        else:
+            value = value.reshape(self.latent().shape)
         raw_value = pos_bijector.inverse(value)
 
         if self.vmap:
@@ -85,21 +88,23 @@ class LatentGPHeinonen(LatentGP):
             cov = kernel_fn(X_inducing, X_inducing)
             noisy_cov = add_to_diagonal(cov, 0.0, get_default_jitter())
             chol = jnp.linalg.cholesky(noisy_cov)
-            log_fx = chol @ latent
-            return log_fx, chol
+            log_fx_inducing = chol @ latent
+            return log_fx_inducing, chol
 
         if self.vmap:
             out_vmap_fn = jax.vmap(out_vmap_fn, in_axes=(1, 1), out_axes=(1, 2))
-            log_fx, chol = out_vmap_fn(X_inducing[..., None], self.latent())
+            log_fx_inducing, chol = out_vmap_fn(X_inducing[..., None], self.latent())
         else:
-            log_fx, chol = out_vmap_fn(X_inducing, self.latent())
+            log_fx_inducing, chol = out_vmap_fn(X_inducing, self.latent())
 
         def predict_fn(X):
             if self.training:
 
-                def in_vmap_fn(x, log_fx, chol):
-                    log_prior = tfd.MultivariateNormalTriL(loc=log_fx.mean(), scale_tril=chol).log_prob(log_fx)
-                    fx = pos_bijector(log_fx)
+                def in_vmap_fn(x, log_fx_inducing, chol):
+                    log_prior = tfd.MultivariateNormalTriL(loc=log_fx_inducing.mean(), scale_tril=chol).log_prob(
+                        log_fx_inducing
+                    )
+                    fx = pos_bijector(log_fx_inducing)
                     return fx, log_prior
 
                 if self.vmap:
@@ -107,17 +112,17 @@ class LatentGPHeinonen(LatentGP):
                     in_vmap_fn = jax.vmap(in_vmap_fn, in_axes=(1, 1, 2), out_axes=(1, 0))
             else:
 
-                def in_vmap_fn(x, log_fx, chol):
-                    mean = log_fx.mean()
+                def in_vmap_fn(x, log_fx_inducing, chol):
+                    mean = log_fx_inducing.mean()
                     cross_cov = kernel_fn(x, X_inducing)
-                    alpha = jsp.linalg.cho_solve((chol, True), log_fx - mean)
+                    alpha = jsp.linalg.cho_solve((chol, True), log_fx_inducing - mean)
                     return pos_bijector(mean + cross_cov @ alpha)
 
                 if self.vmap:
                     X = X[..., None]
                     in_vmap_fn = jax.vmap(in_vmap_fn, in_axes=(1, 1, 2), out_axes=1)
 
-            return in_vmap_fn(X, log_fx, chol)
+            return in_vmap_fn(X, log_fx_inducing, chol)
 
         return predict_fn
 
@@ -131,43 +136,104 @@ class LatentGPDeltaInducing(LatentGP):
             cov = kernel_fn(X_inducing, X_inducing)
             noisy_cov = add_to_diagonal(cov, 0.0, get_default_jitter())
             chol = jnp.linalg.cholesky(noisy_cov)
-            log_fx = chol @ latent
-            return log_fx, chol
+            log_fx_inducing = chol @ latent
+            return log_fx_inducing, chol
 
         if self.vmap:
             out_vmap_fn = jax.vmap(out_vmap_fn, in_axes=(1, 1), out_axes=(1, 2))
-            log_fx, chol = out_vmap_fn(X_inducing[..., None], self.latent())
+            log_fx_inducing, chol = out_vmap_fn(X_inducing[..., None], self.latent())
         else:
-            log_fx, chol = out_vmap_fn(X_inducing, self.latent())
+            log_fx_inducing, chol = out_vmap_fn(X_inducing, self.latent())
 
         def predict_fn(X):
             if self.training:
 
-                def in_vmap_fn(x, log_fx, chol):
-                    log_prior = tfd.MultivariateNormalTriL(loc=log_fx.mean(), scale_tril=chol).log_prob(log_fx)
-                    mean = log_fx.mean()
+                def in_vmap_fn(x, log_fx_inducing, chol):
+                    log_prior = tfd.MultivariateNormalTriL(loc=log_fx_inducing.mean(), scale_tril=chol).log_prob(
+                        log_fx_inducing
+                    )
+                    mean = log_fx_inducing.mean()
                     cross_cov = kernel_fn(x, X_inducing)
-                    alpha = jsp.linalg.cho_solve((chol, True), log_fx - mean)
+                    alpha = jsp.linalg.cho_solve((chol, True), log_fx_inducing - mean)
                     fx = pos_bijector(mean + cross_cov @ alpha)
                     return fx, log_prior
 
                 if self.vmap:
                     in_vmap_fn = jax.vmap(in_vmap_fn, in_axes=(1, 1, 2), out_axes=(1, 0))
-                    return in_vmap_fn(X[..., None], log_fx, chol)
-                return in_vmap_fn(X, log_fx, chol)
+                    return in_vmap_fn(X[..., None], log_fx_inducing, chol)
+                return in_vmap_fn(X, log_fx_inducing, chol)
 
             else:
 
-                def in_vmap_fn(x, log_fx, chol):
-                    mean = log_fx.mean()
+                def in_vmap_fn(x, log_fx_inducing, chol):
+                    mean = log_fx_inducing.mean()
                     cross_cov = kernel_fn(x, X_inducing)
-                    alpha = jsp.linalg.cho_solve((chol, True), log_fx - mean)
+                    alpha = jsp.linalg.cho_solve((chol, True), log_fx_inducing - mean)
                     return pos_bijector(mean + cross_cov @ alpha)
 
                 if self.vmap:
                     in_vmap_fn = jax.vmap(in_vmap_fn, in_axes=(1, 1, 2), out_axes=1)
-                    return in_vmap_fn(X[..., None], log_fx, chol)
-                return in_vmap_fn(X, log_fx, chol)
+                    return in_vmap_fn(X[..., None], log_fx_inducing, chol)
+                return in_vmap_fn(X, log_fx_inducing, chol)
+
+        return predict_fn
+
+
+class LatentGPPlagemann(LatentGP):
+    def __call__(self, X_inducing):
+        pos_bijector = get_positive_bijector()
+        kernel_fn = self.kernel.eval().get_kernel_fn()
+
+        def out_vmap_fn(X_inducing, latent):
+            cov = kernel_fn(X_inducing, X_inducing)
+            noisy_cov = add_to_diagonal(cov, 0.0, get_default_jitter())
+            chol = jnp.linalg.cholesky(noisy_cov)
+            log_fx_inducing = chol @ latent
+            return log_fx_inducing, chol
+
+        if self.vmap:
+            out_vmap_fn = jax.vmap(out_vmap_fn, in_axes=(1, 1), out_axes=(1, 2))
+            log_fx_inducing, chol = out_vmap_fn(X_inducing[..., None], self.latent())
+        else:
+            log_fx_inducing, chol = out_vmap_fn(X_inducing, self.latent())
+
+        def predict_fn(X):
+            if self.training:
+
+                def in_vmap_fn(x, log_fx_inducing_inducing, chol):
+                    mean = log_fx_inducing_inducing.mean()
+                    cross_cov = kernel_fn(x, X_inducing)
+                    alpha = jsp.linalg.cho_solve((chol, True), log_fx_inducing_inducing - mean)
+                    v = jsp.linalg.cho_solve((chol, True), cross_cov.T)
+                    test_cov = kernel_fn(x, x)
+                    pred_cov = test_cov - cross_cov @ v
+                    pred_cov = add_to_diagonal(pred_cov, 0.0, get_default_jitter())
+
+                    log_fx = mean + cross_cov @ alpha
+                    fx = pos_bijector(log_fx)
+
+                    log_prior = tfd.MultivariateNormalFullCovariance(log_fx, pred_cov).log_prob(log_fx)
+                    # log_prior = -jnp.log(jnp.linalg.cholesky(pred_cov).diagonal()).sum()
+
+                    return fx, log_prior
+
+                if self.vmap:
+                    in_vmap_fn = jax.vmap(in_vmap_fn, in_axes=(1, 1, 2), out_axes=(1, 0))
+                    return in_vmap_fn(X[..., None], log_fx_inducing, chol)
+                return in_vmap_fn(X, log_fx_inducing, chol)
+
+            else:
+
+                def in_vmap_fn(x, log_fx_inducing, chol):
+                    mean = log_fx_inducing.mean()
+                    cross_cov = kernel_fn(x, X_inducing)
+                    alpha = jsp.linalg.cho_solve((chol, True), log_fx_inducing - mean)
+                    return pos_bijector(mean + cross_cov @ alpha)
+
+                if self.vmap:
+                    in_vmap_fn = jax.vmap(in_vmap_fn, in_axes=(1, 1, 2), out_axes=1)
+                    return in_vmap_fn(X[..., None], log_fx_inducing, chol)
+                return in_vmap_fn(X, log_fx_inducing, chol)
 
         return predict_fn
 
@@ -189,7 +255,7 @@ class ExactGPRegression(Model):
         else:
             self.X_inducing = lambda: None
 
-    def log_probability(self, X, y):
+    def log_probability(self, X, y, include_prior=True):
         self.train()
         """
         prior_type: default: None, possible values: "prior", "posterior", None
@@ -204,21 +270,57 @@ class ExactGPRegression(Model):
         noise_scale, log_prior_likelihood = likelihood_fn(X)
         noisy_covariance = add_to_diagonal(covariance, noise_scale**2, 0.0)
 
+        log_likelihood = tfd.MultivariateNormalFullCovariance(
+            loc=self.mean(y=y), covariance_matrix=noisy_covariance
+        ).log_prob(y)
+
+        # y_bar = y - self.mean(y=y)
+        # k_inv_y, k_cholesky = get_a_inv_b(noisy_covariance, y_bar, return_cholesky=True)
+        # fit_term = -0.5 * (y_bar.ravel() * k_inv_y.ravel()).sum()  # This will break for multi-dimensional y
+        # penalty_term = -jnp.log(k_cholesky.diagonal()).sum()
+        # log_likelihood = fit_term + penalty_term - 0.5 * y.shape[0] * jnp.log(2 * jnp.pi)
+
+        # lpd = tfd.Normal(self.mean(y=y), jnp.sqrt(jnp.diagonal(noisy_covariance))).log_prob(y).mean()
+        # print(f"{fit_term=}, {penalty_term=}, {log_likelihood=}, {lpd=}")
+        # print(
+        #     f"{log_likelihood=:.20f}, {log_prior_likelihood=}, total={log_likelihood + log_prior_kernel + log_prior_likelihood}"
+        # )  # DEBUG
+        if include_prior:
+            return log_likelihood + log_prior_kernel + log_prior_likelihood
+        else:
+            return log_likelihood
+
+    def nlpd(self, X, y):
+        self.train()
+        """
+        prior_type: default: None, possible values: "prior", "posterior", None
+        """
+        X_inducing = self.X_inducing()
+
+        kernel_fn = self.kernel.get_kernel_fn(X_inducing)
+        likelihood_fn = self.likelihood.get_likelihood_fn(X_inducing)
+
+        covariance, log_kernel_prior = kernel_fn(X, X)
+
+        noise_scale, log_likelihood_prior = likelihood_fn(X)
+        noisy_covariance = add_to_diagonal(covariance, noise_scale**2, 0.0)
+
         # log_likelihood = tfd.MultivariateNormalFullCovariance(
         #     loc=self.mean(y=y), covariance_matrix=noisy_covariance
         # ).log_prob(y)
 
-        y_bar = y - self.mean(y=y)
-        k_inv_y, k_cholesky = get_a_inv_b(noisy_covariance, y_bar, return_cholesky=True)
-        log_likelihood = (
-            -0.5 * (y_bar.ravel() * k_inv_y.ravel()).sum()  # This will break for multi-dimensional y
-            - jnp.log(k_cholesky.diagonal()).sum()
-            - 0.5 * y.shape[0] * jnp.log(2 * jnp.pi)
-        )
+        # y_bar = y - self.mean(y=y)
+        # k_inv_y, k_cholesky = get_a_inv_b(noisy_covariance, y_bar, return_cholesky=True)
+        # fit_term = -0.5 * (y_bar.ravel() * k_inv_y.ravel()).sum()  # This will break for multi-dimensional y
+        # penalty_term = -jnp.log(k_cholesky.diagonal()).sum()
+        # log_likelihood = fit_term + penalty_term - 0.5 * y.shape[0] * jnp.log(2 * jnp.pi)
+
+        nlpd = -tfd.Normal(self.mean(y=y), jnp.sqrt(jnp.diagonal(noisy_covariance))).log_prob(y).mean()
+        # print(f"{fit_term=}, {penalty_term=}, {log_likelihood=}, {lpd=}")
         # print(
         #     f"{log_likelihood=:.20f}, {log_prior_likelihood=}, total={log_likelihood + log_prior_kernel + log_prior_likelihood}"
         # )  # DEBUG
-        return log_likelihood + log_prior_kernel + log_prior_likelihood
+        return nlpd
 
     def condition(self, X, y):
         """
@@ -239,7 +341,7 @@ class ExactGPRegression(Model):
         noisy_covariance = add_to_diagonal(train_cov, noise_scale**2, 0.0)
         k_inv_y, k_cholesky = get_a_inv_b(noisy_covariance, y_bar, return_cholesky=True)
 
-        def predict_fn(X_test, return_cov=True, include_noise=True):
+        def predict_fn(X_test, return_cov, include_noise):
             K_star = kernel_fn(X_test, X)
             pred_mean = K_star @ k_inv_y + mean
 
@@ -285,8 +387,8 @@ class SparseGPRegression(Model):
         kernel_fn = self.kernel.get_kernel_fn(X_inducing)
         likelihood_fn = self.likelihood.get_likelihood_fn(X_inducing)
 
-        noise_scale, log_prior_likelihood = likelihood_fn(X)
-        noise_n = repeat_to_size(noise_scale**2, y.shape[0])
+        _, log_prior_likelihood = likelihood_fn(X)
+        noise_n = self.likelihood.eval().get_likelihood_fn(X_inducing)(X) ** 2
         mean = self.mean(y=y)
 
         k_mm, log_prior_kernel = kernel_fn(X_inducing, X_inducing)
@@ -322,6 +424,52 @@ class SparseGPRegression(Model):
         log_prob = -(0.5 * (data_fit + complexity_penalty + trace_term + X.shape[0] * jnp.log(2 * jnp.pi))).squeeze()
 
         return log_prob + log_prior_kernel + log_prior_likelihood
+
+    def nlpd(self, X, y):
+        self.train()  # Set model to training mode
+
+        X_inducing = self.X_inducing()
+
+        kernel_fn = self.kernel.get_kernel_fn(X_inducing)
+        likelihood_fn = self.likelihood.get_likelihood_fn(X_inducing)
+
+        _, log_prior_likelihood = likelihood_fn(X)
+        noise_n = self.likelihood.eval().get_likelihood_fn(X_inducing)(X) ** 2
+        mean = self.mean(y=y)
+
+        k_mm, log_prior_kernel = kernel_fn(X_inducing, X_inducing)
+
+        y_bar = y - mean
+        k_mm = add_to_diagonal(k_mm, 0.0, get_default_jitter())
+        pred_kernel_fn = self.kernel.eval().get_kernel_fn(X_inducing)
+        k_nm = pred_kernel_fn(X, X_inducing)
+
+        # woodbury identity
+        left = k_nm / noise_n.reshape(-1, 1)
+        right = left.T
+        middle = k_mm + right @ k_nm
+        k_inv = jnp.diag(1 / noise_n.squeeze()) - left @ jsp.linalg.cho_solve(
+            (jnp.linalg.cholesky(middle), True), right
+        )
+        data_fit = y_bar.reshape(1, -1) @ k_inv @ y_bar.reshape(-1, 1)
+
+        # matrix determinant lemma
+        # https://en.wikipedia.org/wiki/Matrix_determinant_lemma
+        chol_m = jnp.linalg.cholesky(k_mm)
+        right = jsp.linalg.solve_triangular(chol_m, k_nm.T, lower=True)  # m x n
+        term = (right / noise_n.reshape(1, -1)) @ right.T + jnp.eye(X_inducing.shape[0])
+        log_det_term = jnp.log(jnp.linalg.cholesky(term).diagonal()).sum() * 2
+        log_det_noise = jnp.log(noise_n).sum()
+        complexity_penalty = log_det_term + log_det_noise
+
+        # trace
+        k_diag = (jax.vmap(lambda x: kernel_fn(x.reshape(1, -1), x.reshape(1, -1)))(X)).reshape(-1)
+        q_diag = jnp.square(right).sum(axis=0)
+        trace_term = ((k_diag - q_diag) / noise_n).sum()
+
+        log_prob = -(0.5 * (data_fit + complexity_penalty + trace_term + X.shape[0] * jnp.log(2 * jnp.pi))).squeeze()
+
+        raise NotImplementedError
 
     def condition(self, X, y):
         self.eval()  # Set model to evaluation mode

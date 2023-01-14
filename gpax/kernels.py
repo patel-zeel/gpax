@@ -205,9 +205,12 @@ class Gibbs(Kernel):
         self.flex_sigma = flex_sigma
         self.ARD = ARD
 
+        lengthscale = jnp.asarray(lengthscale)
+        scale = jnp.asarray(scale)
+
         if self.flex_ell:
             self.ell_model = ell_model
-            assert self.ell_model.vmap is True, "ell_model must be a vmap model."
+            # assert self.ell_model.vmap is True, "ell_model must be a vmap model."
         else:
             if self.ARD:
                 lengthscale = repeat_to_size(lengthscale, X_inducing.shape[1])
@@ -218,9 +221,8 @@ class Gibbs(Kernel):
         if self.flex_sigma:
             self.sigma_model = sigma_model
             assert self.sigma_model.vmap is False, "sigma_model must be a non-vmap model."
-
-        if self.flex_sigma is False:
-            assert scale.shape == (), "scale must be a scalar."
+        else:
+            assert scale.shape == (), f"scale must be a scalar but got shape={scale.shape}."
             self.scale = Parameter(scale, get_positive_bijector())
 
     @staticmethod
@@ -242,11 +244,9 @@ class Gibbs(Kernel):
         def kernel_fn(X1, X2, X_inducing):
             X1, X2, X_inducing = self.slice_inputs(X1, X2, X_inducing)
 
-            ell_fn = self.ell_model(X_inducing)
-            sigma_fn = self.sigma_model(X_inducing)
-
             #### Lengthscale ####
             if self.flex_ell:
+                ell_fn = self.ell_model(X_inducing)
                 if self.training:
                     # X1 and X2 should be the same here
                     ell1, log_ell_prior = ell_fn(X1)
@@ -255,8 +255,11 @@ class Gibbs(Kernel):
                 else:
                     ell1, ell2 = ell_fn(X1), ell_fn(X2)
             else:
-                ell1 = self.lengthscale().reshape(1, -1).repeat(X1.shape[0], axis=0).squeeze()
-                ell2 = ell1 = jnp.atleast_1d(ell1)
+                log_ell_prior = jnp.array(0.0)
+                ell1 = self.lengthscale().reshape(1, -1).repeat(X1.shape[0], axis=0)
+                ell2 = self.lengthscale().reshape(1, -1).repeat(X2.shape[0], axis=0)
+                ell1 = jnp.atleast_1d(ell1)
+                ell2 = jnp.atleast_1d(ell2)
 
             if self.ARD:
 
@@ -268,14 +271,18 @@ class Gibbs(Kernel):
 
             #### Scale ####
             if self.flex_sigma:
+                sigma_fn = self.sigma_model(X_inducing)
                 if self.training:
                     sigma1, log_sigma_prior = sigma_fn(X1)
                     sigma2 = sigma1
                 else:
                     sigma1, sigma2 = sigma_fn(X1), sigma_fn(X2)
             else:
+                log_sigma_prior = jnp.array(0.0)
                 sigma1 = self.scale().reshape(1, 1).repeat(X1.shape[0], axis=0).squeeze()
-                sigma2 = sigma1 = jnp.atleast_1d(sigma1)
+                sigma2 = self.scale().reshape(1, 1).repeat(X2.shape[0], axis=0).squeeze()
+                sigma1 = jnp.atleast_1d(sigma1)
+                sigma2 = jnp.atleast_1d(sigma2)
 
             sigma1, sigma2 = sigma1.reshape(-1, 1), sigma2.reshape(-1, 1)  # 1D only
             variance = sigma1 * sigma2.T

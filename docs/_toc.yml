@@ -1,0 +1,9 @@
+format: jb-book
+root: intro
+parts:
+  - caption: Documentation
+    chapters:
+      - file: docs/core
+  # - caption: Examples
+  #   chapters:
+  #     - file: docs/notebooks/probability/univariate-normal-expectations

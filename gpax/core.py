@@ -47,30 +47,45 @@ def set_positive_bijector(bijector):
     POSITIVE_BIJECTOR = bijector
 
 
+# This condition is used to treat `Parameter` objects as leaves in a PyTree
 is_parameter = lambda x: isinstance(x, Parameter)
 
 
+@jtu.register_pytree_node_class
 class Parameter:
     def __init__(
         self,
         value: Union[float, Array],
         bijector: tfb.Bijector = None,
         prior: tfd.Distribution = None,
-        trainable: bool = True,
-        fixed_init: bool = False,
+        trainable: bool = True,  # if False, the value is not updated during training
     ):
-        self.bijector = bijector if bijector is not None else tfb.Identity()
+        value = jnp.asarray(value)
         self.prior = prior
         self._trainable = trainable
-        self.fixed_init = fixed_init  # if True, the value is not changed during initialization
-        self._shape = jnp.asarray(value).shape
-        self._raw_value = self.bijector.inverse(jnp.asarray(value))
+
+        # bijector
+        if bijector is None:
+            if self.prior is None:
+                bijector = tfb.Identity()
+            elif isinstance(self.prior, tfd.Distribution):
+                bijector = self.prior._default_event_space_bijector()
+            else:
+                raise ValueError(f"prior must be a Distribution, not {type(self.prior)}")
+        self.bijector = bijector
+
+        # store value in unconstrained space
+        self._raw_value = self.bijector.inverse(value)
+
+        self._shape = value.shape
         self._raw_shape = self._raw_value.shape
 
     def get_value(self):
-        if self._trainable is False:
-            self._raw_value = jax.lax.stop_gradient(self._raw_value)
-        return self.bijector(self._raw_value)
+        if not self._trainable:
+            raw_value = jax.lax.stop_gradient(self._raw_value)
+        else:
+            raw_value = self._raw_value
+        return self.bijector(raw_value)
 
     def trainable(self, is_trainable: bool = True):
         self._trainable = is_trainable
@@ -83,28 +98,50 @@ class Parameter:
         return self._raw_value
 
     def set_raw_value(self, raw_value):
-        assert raw_value.shape == self._raw_shape
-        self._raw_value = jnp.array(raw_value)
+        raw_value = jnp.asarray(raw_value)
+        assert raw_value.shape == self._raw_shape, f"{raw_value.shape} != {self._raw_shape}"
+        self._raw_value = raw_value
 
     def set_value(self, value):
-        assert jnp.asarray(value).shape == self._shape
-        self._raw_value = self.bijector.inverse(jnp.asarray(value))
+        value = jnp.asarray(value)
+        assert jnp.asarray(value).shape == self._shape, f"{value.shape} != {self._shape}"
+        raw_value = self.bijector.inverse(value)
+        self.set_raw_value(raw_value)
 
     def initialize(self, key):
-        if self.fixed_init or self._trainable is False:
+        if self._trainable is False:
             return
         elif self.prior is None:
-            self._raw_value = get_default_prior().sample(self._raw_value.shape, key)
+            default_prior = get_default_prior()
+            raw_value = default_prior.sample(self._raw_value.shape, key)
+            self.set_raw_value(raw_value)
         else:
             value = self.prior.sample(self._shape, key)
-            self._raw_value = self.bijector.inverse(value)
+            self.set_value(value)
 
-    def log_prior(self):
-        if self.prior is None or (self.trainable is False):
+    def log_prob(self):
+        if self.prior is None:
             return jnp.zeros_like(self._raw_value)
-        return self.prior.log_prob(self.bijector(self._raw_value))
+        else:
+            return self.prior.log_prob(self.get_value())
+
+    def __repr__(self) -> str:
+        return f"Parameter(shape={self._shape})"
+
+    def tree_flatten(self):
+        raw_params = (self._raw_value,)
+        aux = (self.bijector, self.prior, self._trainable)
+        return raw_params, aux
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, raw_params):
+        bijector, prior, trainable = aux_data
+        raw_value = raw_params[0]
+        value = bijector(raw_value)
+        return cls(value, bijector, prior, trainable)
 
 
+# @jtu.register_pytree_node_class
 class Module:
     def __init__(self):
         self._modules = {}
@@ -113,20 +150,20 @@ class Module:
 
     def train(self):
         self.training = True
-        for module in self.modules():
+        for module in self._modules.values():
             module.train()
         return self
 
     def eval(self):
         self.training = False
-        for module in self.modules():
+        for module in self._modules.values():
             module.eval()
         return self
 
     def trainable(self, is_trainable: bool = True):
         for param in self._parameters.values():
             param.trainable(is_trainable)
-        for module in self.modules():
+        for module in self._modules.values():
             module.trainable(is_trainable)
         return self
 
@@ -144,9 +181,8 @@ class Module:
 
         if key in self._modules:
             return self._modules[key]
-
-    def modules(self):
-        return self._modules.values()
+        else:
+            raise AttributeError(f"Module has no attribute {key}")
 
     def get_raw_parameters(self, raw_dict=True):
         params = jtu.tree_map(lambda x: x, self._parameters)  # copy
@@ -159,29 +195,70 @@ class Module:
             return params
 
     def get_parameters(self, raw_dict=True):
-        params = self.get_raw_parameters(raw_dict=False)
+        params = jtu.tree_map(lambda x: x, self._parameters)  # copy
+        for module_name, module in self._modules.items():
+            params[module_name] = module.get_parameters(raw_dict=False)
 
         if raw_dict:
-            return jtu.tree_map(lambda x: x(), params, is_leaf=is_parameter)
+            return jtu.tree_map(lambda x: x.get_value(), params, is_leaf=is_parameter)
         else:
             return params
 
     def set_raw_parameters(self, raw_params):
-        params = self.get_raw_parameters(raw_dict=False)
-        jtu.tree_map(lambda param, value: param.set_raw_value(value), params, raw_params, is_leaf=is_parameter)
+        for module_name, module in self._modules.items():
+            module.set_raw_parameters(raw_params[module_name])
+            raw_params.pop(module_name)
+
+        for param_name, param in self._parameters.items():
+            param.set_raw_value(raw_params[param_name])
 
     def set_parameters(self, params):
-        raw_params = self.get_parameters(raw_dict=False)
-        jtu.tree_map(lambda param, value: param.set_value(value), raw_params, params, is_leaf=is_parameter)
+        for module_name, module in self._modules.items():
+            module.set_parameters(params[module_name])
+            params.pop(module_name)
+
+        for param_name, param in self._parameters.items():
+            param.set_value(params[param_name])
 
     def initialize(self, key):
-        param_objects = self.get_raw_parameters(raw_dict=False)
-        flat_params, _ = jtu.tree_flatten(param_objects, is_leaf=is_parameter)
-        seeds = [seed for seed in jax.random.split(key, len(flat_params))]
-        jtu.tree_map(lambda seed, param: param.initialize(seed), seeds, flat_params)
-        return self.get_raw_parameters(raw_dict=True)
+        key1, key2 = jax.random.split(key)
 
-    def log_prior(self):
-        params = self.raw_parameters(raw_dict=False)
-        log_prior_values = jtu.tree_map(lambda x: x.log_prior(), params, is_leaf=is_parameter)
-        return ravel_pytree(log_prior_values)[0].sum()
+        for module in self._modules.values():
+            module.initialize(key1)
+            key1 = jax.random.split(key1, num=1)[0]
+
+        for param in self._parameters.values():
+            param.initialize(key2)
+            key2 = jax.random.split(key2, num=1)[0]
+
+    def log_prob(self, reduce=True):
+        log_probs = {}
+        for module_name, module in self._modules.items():
+            log_probs[module_name] = module.log_prob(reduce=False)
+
+        for param_name, param in self._parameters.items():
+            log_probs[param_name] = param.log_prob()
+
+        if reduce:
+            return ravel_pytree(log_probs)[0].sum()
+        else:
+            return log_probs
+
+    # TODO: fix this to work with pytree
+    # def tree_flatten(self):
+
+    # @classmethod
+    # def tree_unflatten(cls, aux_data, flat_values):
+    #     self = cls()
+    #     self.training = aux_data["___training"]
+    #     all_values = aux_data["___unravel_fn"](flat_values)
+    #     for param_name, aux in aux_data["___parameters"].items():
+    #         param = Parameter.tree_unflatten(aux, all_values["___parameters"][param_name])
+    #         self._parameters[param_name] = param
+
+    #     for module_name, aux in aux_data["___modules"].items():
+    #         module = Module.tree_unflatten(aux, (all_values["___modules"][module_name],))
+    #         module.training = aux["___training"]
+    #         self._modules[module_name] = module
+
+    #     return self
