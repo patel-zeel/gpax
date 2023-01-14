@@ -17,6 +17,7 @@ jobs:
           python-version: 3.8
       - name: Build Jupyter Book
         run: |
+          pip install jupyter-book
           jupyter-book build docs
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
