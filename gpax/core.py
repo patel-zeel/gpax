@@ -146,16 +146,16 @@ class Module:
     def __init__(self):
         self._modules = {}
         self._parameters = {}
-        self.training = True
+        self._training = True
 
     def train(self):
-        self.training = True
+        self._training = True
         for module in self._modules.values():
             module.train()
         return self
 
     def eval(self):
-        self.training = False
+        self._training = False
         for module in self._modules.values():
             module.eval()
         return self
@@ -205,6 +205,7 @@ class Module:
             return params
 
     def set_raw_parameters(self, raw_params):
+        raw_params = jtu.tree_map(lambda x: x, raw_params)  # copy
         for module_name, module in self._modules.items():
             module.set_raw_parameters(raw_params[module_name])
             raw_params.pop(module_name)
@@ -213,6 +214,7 @@ class Module:
             param.set_raw_value(raw_params[param_name])
 
     def set_parameters(self, params):
+        params = jtu.tree_map(lambda x: x, params)  # copy
         for module_name, module in self._modules.items():
             module.set_parameters(params[module_name])
             params.pop(module_name)
@@ -250,7 +252,7 @@ class Module:
     # @classmethod
     # def tree_unflatten(cls, aux_data, flat_values):
     #     self = cls()
-    #     self.training = aux_data["___training"]
+    #     self._training = aux_data["___training"]
     #     all_values = aux_data["___unravel_fn"](flat_values)
     #     for param_name, aux in aux_data["___parameters"].items():
     #         param = Parameter.tree_unflatten(aux, all_values["___parameters"][param_name])

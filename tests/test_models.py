@@ -8,9 +8,6 @@ import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 
-# jax 64 bit mode
-jax.config.update("jax_enable_x64", True)
-
 from gpax.models import LatentGPHeinonen, LatentGPDeltaInducing
 from gpax.core import set_default_jitter, get_default_jitter
 from gpax.models import ExactGPRegression, SparseGPRegression
@@ -23,6 +20,8 @@ import GPy
 from GPy.kern import RBF, Matern32, Matern52, Exponential, Poly
 from GPy.models import GPRegression
 
+# jax 64 bit mode
+jax.config.update("jax_enable_x64", True)
 
 X_inducing = jax.random.uniform(jax.random.PRNGKey(0), (5, 3))
 X = jax.random.uniform(jax.random.PRNGKey(1), (10, 3))
@@ -60,7 +59,7 @@ keys = [key for key in jax.random.split(jax.random.PRNGKey(10), n_tests)]
 
 
 def gpy_loss(params):
-    kernel = RBF(X.shape[1], params["kernel"]["scale"] ** 2, params["kernel"]["lengthscale"], ARD=True)
+    kernel = RBF(X.shape[1], params["kernel"]["variance"], params["kernel"]["kernel"]["lengthscale"], ARD=True)
     mean = GPy.core.Mapping(X.shape[1], 1)
     mean.f = lambda x: params["mean"]["value"]
     mean.update_gradients = lambda a, b: None
@@ -74,30 +73,34 @@ def test_init():
     scale = jnp.array(2.0)
     noise_scale = jnp.array(0.1)
 
-    kernel = gpk.RBF(X, lengthscale=ls, scale=scale)
+    kernel = gpk.Scale(X, gpk.RBF(X, lengthscale=ls), variance=scale**2)
     gp = ExactGPRegression(kernel=kernel, likelihood=Gaussian(scale=noise_scale), mean=Scalar())
 
     values = gp.get_parameters()
-    assert jnp.allclose(values["kernel"]["lengthscale"], ls)
-    assert jnp.allclose(values["kernel"]["scale"], scale)
+    assert jnp.allclose(values["kernel"]["kernel"]["lengthscale"], ls)
+    assert jnp.allclose(values["kernel"]["variance"], scale**2)
     assert jnp.allclose(values["likelihood"]["scale"], noise_scale)
 
     raw_values = gp.get_raw_parameters()
-    assert jnp.allclose(raw_values["kernel"]["lengthscale"], gp.kernel.lengthscale.bijector.inverse(ls))
-    assert jnp.allclose(raw_values["kernel"]["scale"], gp.kernel.scale.bijector.inverse(scale))
+    assert jnp.allclose(
+        raw_values["kernel"]["kernel"]["lengthscale"], gp.kernel.kernel.lengthscale.bijector.inverse(ls)
+    )
+    assert jnp.allclose(raw_values["kernel"]["variance"], gp.kernel.variance.bijector.inverse(scale**2))
     assert jnp.allclose(raw_values["likelihood"]["scale"], gp.likelihood.scale.bijector.inverse(noise_scale))
 
 
 @pytest.mark.parametrize("key", keys)
 @pytest.mark.parametrize(
-    "kernel",
+    "base_kernel_fn",
     [
         gpk.RBF,
         # GibbsKernel(flex_scale=False, flex_variance=False),
     ],
 )
-def test_exact_gp(key, kernel):
-    gp = ExactGPRegression(kernel=kernel(X), likelihood=Gaussian(), mean=Scalar())
+def test_exact_gp(key, base_kernel_fn):
+    base_kernel = base_kernel_fn(X, lengthscale=0.1)
+    kernel = gpk.Scale(X, base_kernel, variance=0.2)
+    gp = ExactGPRegression(kernel=kernel, likelihood=Gaussian(), mean=Scalar())
     gp.initialize(key)
     log_prob = gp.log_probability(X, y)
 
@@ -106,7 +109,7 @@ def test_exact_gp(key, kernel):
 
     # jittable
     def neg_log_prob(raw_params):
-        gp = ExactGPRegression(kernel=kernel(X), likelihood=Gaussian(), mean=Scalar())
+        gp = ExactGPRegression(kernel=kernel, likelihood=Gaussian(), mean=Scalar())
         gp.set_parameters(raw_params)
         return -gp.log_probability(X, y)
 

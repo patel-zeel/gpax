@@ -30,7 +30,7 @@ class Gaussian(Likelihood):
         return self.likelihood_fn
 
     def likelihood_fn(self, X):
-        if self.training:
+        if self._training:
             return self.scale.get_value(), 0.0
         else:
             return self.scale.get_value()

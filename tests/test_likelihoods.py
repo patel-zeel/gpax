@@ -9,7 +9,7 @@ import pytest
 
 from gpax.models import ExactGPRegression, LatentGPHeinonen, LatentGPDeltaInducing
 from gpax.core import Parameter, get_positive_bijector
-from gpax.kernels import RBF
+from gpax.kernels import RBF, Scale
 from gpax.likelihoods import Gaussian, Heteroscedastic
 
 from tests.utils import assert_same_pytree, assert_approx_same_pytree
@@ -35,7 +35,8 @@ def test_gaussian():
 @pytest.mark.parametrize("latent_model_type", [LatentGPHeinonen, LatentGPDeltaInducing])
 def test_heteroscedastic(latent_model_type, X_inducing):
     X_inducing = X_inducing if latent_model_type is LatentGPDeltaInducing else X
-    kernel = RBF(X_inducing, 2.0, 3.0)
+    base_kernel = RBF(X_inducing, lengthscale=2.0)
+    kernel = Scale(X, base_kernel, variance=3.0**2)
     latent_model = latent_model_type(X_inducing, kernel)
     likelihood = Heteroscedastic(latent_model)
     params = likelihood.get_parameters()
@@ -45,8 +46,10 @@ def test_heteroscedastic(latent_model_type, X_inducing):
             "latent_model": {
                 "latent": jnp.ones(()).repeat(X_inducing.shape[0]),
                 "kernel": {
-                    "lengthscale": jnp.array(2.0).repeat(X.shape[1]),
-                    "scale": jnp.array(3.0),
+                    "variance": jnp.array(3.0**2),
+                    "base_kernel": {
+                        "lengthscale": jnp.array(2.0).repeat(X.shape[1]),
+                    },
                 },
             }
         },

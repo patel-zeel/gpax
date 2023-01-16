@@ -23,6 +23,7 @@ tfd = tfp.distributions
 
 import pytest
 
+# jax 64 bit mode
 jax.config.update("jax_enable_x64", True)
 
 
@@ -68,7 +69,10 @@ def test_parameter(value, bijector, prior):
     assert jnp.allclose(p(), jnp.asarray(value))
 
     if bijector is None:
-        bijector = tfb.Identity()
+        if prior is None:
+            bijector = tfb.Identity()
+        else:
+            bijector = prior._default_event_space_bijector()
 
     assert jnp.allclose(p.get_raw_value(), bijector.inverse(jnp.asarray(value)))
 

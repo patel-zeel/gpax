@@ -13,6 +13,8 @@ tfd = tfp.distributions
 from gpax.core import Module, Parameter, get_default_jitter, get_positive_bijector
 from gpax.utils import add_to_diagonal, get_a_inv_b, repeat_to_size
 
+import optax
+
 from jaxtyping import Array, Float
 from typing import TYPE_CHECKING
 
@@ -50,7 +52,7 @@ class LatentGP(LatentModel):
         else:
             self.latent = Parameter(jnp.ones(X_inducing.shape[0]))
 
-    def reverse_init_latent(self, value):
+    def reverse_init(self, value):
         pos_bijector = get_positive_bijector()
         kernel_fn = self.kernel.eval().get_kernel_fn()
 
@@ -62,6 +64,7 @@ class LatentGP(LatentModel):
             # latent = jnp.linalg.solve(chol, raw_value)
             return latent
 
+        value = jnp.asarray(value)
         assert value.size in (1, self.latent().size)
         if value.size == 1:
             value = jnp.ones(self.latent().shape) * value
@@ -98,7 +101,7 @@ class LatentGPHeinonen(LatentGP):
             log_fx_inducing, chol = out_vmap_fn(X_inducing, self.latent())
 
         def predict_fn(X):
-            if self.training:
+            if self._training:
 
                 def in_vmap_fn(x, log_fx_inducing, chol):
                     log_prior = tfd.MultivariateNormalTriL(loc=log_fx_inducing.mean(), scale_tril=chol).log_prob(
@@ -146,7 +149,7 @@ class LatentGPDeltaInducing(LatentGP):
             log_fx_inducing, chol = out_vmap_fn(X_inducing, self.latent())
 
         def predict_fn(X):
-            if self.training:
+            if self._training:
 
                 def in_vmap_fn(x, log_fx_inducing, chol):
                     log_prior = tfd.MultivariateNormalTriL(loc=log_fx_inducing.mean(), scale_tril=chol).log_prob(
@@ -198,7 +201,7 @@ class LatentGPPlagemann(LatentGP):
             log_fx_inducing, chol = out_vmap_fn(X_inducing, self.latent())
 
         def predict_fn(X):
-            if self.training:
+            if self._training:
 
                 def in_vmap_fn(x, log_fx_inducing_inducing, chol):
                     mean = log_fx_inducing_inducing.mean()
@@ -289,6 +292,36 @@ class ExactGPRegression(Model):
             return log_likelihood + log_prior_kernel + log_prior_likelihood
         else:
             return log_likelihood
+
+    def fit(self, key, X, y, lr=0.01, epochs=100):
+        self.initialize(key)
+        raw_params = self.get_raw_parameters()
+        optimizer = optax.adam(learing_rate=lr)
+        init_state = optimizer.init(raw_params)
+
+        def loss_fn(raw_params):
+            self.set_raw_parameters(raw_params)
+            return -self.log_probability(X, y)
+
+        value_and_grad_fn = jax.value_and_grad(loss_fn)
+
+        def one_step(raw_params_and_state, aux):
+            raw_params, state = raw_params_and_state
+            loss, grads = value_and_grad_fn(raw_params)
+            updates, state = optimizer.update(grads, state)
+            raw_params = optax.apply_updates(raw_params, updates)
+            return (raw_params, state), (raw_params, loss)
+
+        (raw_params, state), (raw_params_history, loss_history) = jax.lax.scan(
+            f=one_step, init=(raw_params, state), xs=None, length=epochs
+        )
+
+        self.set_raw_parameters(raw_params)
+        return {
+            "raw_params": raw_params,
+            "raw_params_history": raw_params_history,
+            "loss_history": loss_history,
+        }
 
     def nlpd(self, X, y):
         self.train()

@@ -4,6 +4,7 @@ parts:
   - caption: Documentation
     chapters:
       - file: docs/core
+      - file: docs/module
   # - caption: Examples
   #   chapters:
   #     - file: docs/notebooks/probability/univariate-normal-expectations

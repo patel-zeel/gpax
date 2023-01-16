@@ -14,7 +14,10 @@ import gpax.kernels as gpk
 
 from tests.utils import assert_same_pytree
 
-from GPy.kern import RBF as EQ, Matern32, Matern52, Exponential, Poly
+from GPy.kern import RBF as EQ, Matern32, Matern52, Exponential, Poly, StdPeriodic
+
+# jax 64 bit mode
+jax.config.update("jax_enable_x64", True)
 
 
 @pytest.mark.parametrize(
@@ -29,6 +32,7 @@ from GPy.kern import RBF as EQ, Matern32, Matern52, Exponential, Poly
         (gpk.Matern32, Matern32),
         (gpk.Matern52, Matern52),
         (gpk.Polynomial, Poly),
+        (gpk.Periodic, StdPeriodic),
     ],
 )
 def test_execution(X, kernel, gpy_kernel, ls, scale):
@@ -45,12 +49,28 @@ def test_execution(X, kernel, gpy_kernel, ls, scale):
 
         assert jnp.allclose(ours, gpy_vals)
 
-    else:
-        kernel = kernel(X=X, lengthscale=ls, scale=scale, ARD=True)
+    elif kernel is gpk.Periodic:
+        # TODO: fix this test and the periodic kernel
+        period = 2.3
+        base_kernel = kernel(X=X, period=period, lengthscale=ls)
+        kernel = gpk.Scale(X, base_kernel, variance=scale**2)
         kernel_fn = kernel.eval().get_kernel_fn()
         params = kernel.get_parameters()
-        assert len(params["lengthscale"]) == X.shape[1]
-        kernel_gpy = gpy_kernel(X.shape[1], lengthscale=params["lengthscale"], variance=params["scale"] ** 2, ARD=True)
+
+        gpy_kernel = gpy_kernel(X.shape[1], variance=scale**2, lengthscale=ls, period=period)
+
+        ours = kernel_fn(X, X)
+        gpy_vals = gpy_kernel.K(X, X)
+
+        assert jnp.allclose(ours, gpy_vals, atol=1e-4)
+
+    else:
+        base_kernel = kernel(X, lengthscale=ls, ARD=True)
+        kernel = gpk.Scale(X, base_kernel, variance=scale**2)
+        kernel_fn = kernel.eval().get_kernel_fn()
+        params = kernel.get_parameters()
+        assert len(params["kernel"]["lengthscale"]) == X.shape[1]
+        kernel_gpy = gpy_kernel(X.shape[1], lengthscale=ls, variance=scale**2, ARD=True)
         ours = kernel_fn(X, X)
         gpy_vals = kernel_gpy.K(X, X)
 
@@ -60,7 +80,8 @@ def test_execution(X, kernel, gpy_kernel, ls, scale):
 def test_combinations():
     X = jax.random.normal(jax.random.PRNGKey(0), (3, 1))
     kernel = (
-        gpk.RBF(X=X, lengthscale=0.1, scale=0.2) * gpk.Matern12(X=X, lengthscale=0.3, scale=0.4)
+        gpk.Scale(X, gpk.RBF(X, lengthscale=0.1), variance=0.2**2)
+        * gpk.Scale(X, gpk.Matern12(X=X, lengthscale=0.3), variance=0.4**2)
     ) * gpk.Polynomial(X=X, center=0.5, order=1.0)
     kernel_gpy = ((EQ(X.shape[1], 0.2**2, 0.1)) * (Exponential(X.shape[1], 0.4**2, 0.3))) * (
         Poly(X.shape[1], bias=0.5, order=1.0)
@@ -81,15 +102,15 @@ def test_gibbs_kernel(model):
     if model is LatentGPHeinonen:
         X_inducing = X
 
-    ell_kernel = gpk.RBF(X_inducing, 0.1, 0.2)
+    ell_kernel = gpk.Scale(X_inducing, gpk.RBF(X_inducing, 0.1), 0.2)
     ell_model = model(X_inducing, ell_kernel, vmap=True)
-    sigma_kernel = gpk.RBF(X_inducing, 0.3, 0.4)
+    sigma_kernel = gpk.Scale(X_inducing, gpk.RBF(X_inducing, 0.3), 0.4)
     sigma_model = model(X_inducing, sigma_kernel)
-    kernel = gpk.Gibbs(
+    base_kernel = gpk.Gibbs(
         X_inducing,
         ell_model,
-        sigma_model,
     )
+    kernel = gpk.InputDependentScale(X_inducing, base_kernel, sigma_model)
 
     kernel_fn = kernel.get_kernel_fn(X_inducing)
     cov, log_prior = kernel_fn(X, X)

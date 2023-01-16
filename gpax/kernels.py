@@ -25,7 +25,15 @@ class MetaKernel(Module):
         return Sum(k1=self, k2=other)
 
     def __mul__(self, other):
-        return Product(k1=self, k2=other)
+        if isinstance(other, MetaKernel):
+            return Product(k1=self, k2=other)
+        else:
+            other = jnp.asarray(other)
+            X = jnp.ones((1, 1))  # dummy
+            return Scale(X, base_kernel=self, variance=other)
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
 
 
 class MathKernel(MetaKernel):
@@ -39,7 +47,7 @@ class MathKernel(MetaKernel):
         k2 = self.k2.get_kernel_fn(X_inducing=X_inducing)
 
         def kernel_fn(X1, X2):
-            if self.training:
+            if self._training:
                 K1, log_prior1 = k1(X1, X2)
                 K2, log_prior2 = k2(X1, X2)
                 return self.operation(K1, K2), log_prior1 + log_prior2  # return log_prior
@@ -65,6 +73,8 @@ class Kernel(MetaKernel):
     def __init__(self, X: Array, active_dims: list):
         super(Kernel, self).__init__()
         self.active_dims = active_dims
+        self._num_dim = X.shape[1]
+        self._num_data = X.shape[0]
         if self.active_dims is None:
             assert X is not None, "X must be specified if active_dims is None"
             self.active_dims = list(range(X.shape[1]))
@@ -75,18 +85,40 @@ class Kernel(MetaKernel):
         return jtu.tree_map(lambda x: x[:, self.active_dims], args)
 
 
+class Scale(Kernel):
+    def __init__(self, X: Array, base_kernel: MetaKernel, variance: float = 1.0, active_dims: list = None):
+        super(Scale, self).__init__(X, active_dims)
+        self.base_kernel = base_kernel
+
+        variance = jnp.asarray(variance)
+        assert variance.shape == (), "variance must be a scalar."
+        self.variance = Parameter(variance, get_positive_bijector())
+
+    def get_kernel_fn(self, X_inducing: Array = None):
+        def kernel_fn(X1, X2):
+            if self._training:
+                K, log_prior = self.base_kernel.get_kernel_fn(X_inducing)(X1, X2)
+                return self.variance() * K, log_prior
+            else:
+                K = self.base_kernel.get_kernel_fn(X_inducing)(X1, X2)
+                return self.variance() * K
+
+        return kernel_fn
+
+    def __repr__(self) -> str:
+        return f"Scale({self.base_kernel})"
+
+
 class Smooth(Kernel):
     def __init__(
         self,
         X: Array,
         lengthscale: float = 1.0,
-        scale: float = 1.0,
         active_dims: list = None,
         ARD: bool = True,
     ):
         super(Smooth, self).__init__(X, active_dims)
         lengthscale = jnp.asarray(lengthscale)
-        scale = jnp.asarray(scale)
         self.ARD = ARD
 
         if self.ARD:
@@ -98,10 +130,7 @@ class Smooth(Kernel):
         else:
             assert lengthscale.shape == (), "lengthscale must be a scalar when ARD=False."
 
-        assert scale.shape == (), "scale must be a scalar."
-
         self.lengthscale = Parameter(lengthscale, get_positive_bijector())
-        self.scale = Parameter(scale, get_positive_bijector())
 
     def get_kernel_fn(self, X_inducing: Parameter = None):
         return self.call
@@ -111,7 +140,7 @@ class Smooth(Kernel):
         kernel_fn = jax.vmap(kernel_fn, in_axes=(None, 0))
         kernel_fn = jax.vmap(kernel_fn, in_axes=(0, None))
         X1, X2 = self.slice_inputs(X1, X2)
-        if self.training:
+        if self._training:
             return kernel_fn(X1, X2), 0.0
         else:
             return kernel_fn(X1, X2)
@@ -122,7 +151,7 @@ class RBF(Smooth):
         x1 = x1 / self.lengthscale()
         x2 = x2 / self.lengthscale()
         sqr_dist = squared_distance(x1, x2)
-        return ((self.scale() ** 2) * jnp.exp(-0.5 * sqr_dist)).squeeze()
+        return jnp.exp(-0.5 * sqr_dist).squeeze()
 
     def __repr__(self) -> str:
         return "RBF"
@@ -137,7 +166,7 @@ class Matern12(Smooth):
         x1 = x1 / self.lengthscale()
         x2 = x2 / self.lengthscale()
         dist = distance(x1, x2)
-        return ((self.scale() ** 2) * jnp.exp(-dist)).squeeze()
+        return jnp.exp(-dist).squeeze()
 
     def __repr__(self) -> str:
         return "Matern12"
@@ -149,7 +178,7 @@ class Matern32(Smooth):
         x2 = x2 / self.lengthscale()
         arg = jnp.sqrt(3.0) * distance(x1, x2)
         exp_part = (1.0 + arg) * jnp.exp(-arg)
-        return ((self.scale() ** 2) * exp_part).squeeze()
+        return exp_part.squeeze()
 
     def __repr__(self) -> str:
         return "Matern32"
@@ -161,10 +190,30 @@ class Matern52(Smooth):
         x2 = x2 / self.lengthscale()
         arg = jnp.sqrt(5.0) * distance(x1, x2)
         exp_part = (1.0 + arg + jnp.square(arg) / 3) * jnp.exp(-arg)
-        return ((self.scale() ** 2) * exp_part).squeeze()
+        return exp_part.squeeze()
 
     def __repr__(self) -> str:
         return "Matern52"
+
+
+class Periodic(Smooth):
+    def __init__(
+        self,
+        X: Array,
+        lengthscale: float = 1.0,
+        period: float = 1.0,
+        active_dims: list = None,
+        ARD: bool = True,
+    ):
+        super(Periodic, self).__init__(X, lengthscale, active_dims, ARD)
+        self.period = Parameter(period, get_positive_bijector())
+
+    def pair_wise(self, x1, x2):
+        arg = jnp.sin(jnp.pi * distance(x1, x2) / self.period())
+        return jnp.exp(-2.0 * jnp.square(arg) / self.lengthscale()).squeeze()
+
+    def __repr__(self) -> str:
+        return "Periodic"
 
 
 class Polynomial(Kernel):
@@ -173,12 +222,12 @@ class Polynomial(Kernel):
         self.order = order
         self.center = Parameter(center, get_positive_bijector())
 
-    def get_kernel_fn(self, X_inducing: Parameter = None):
+    def get_kernel_fn(self, X_inducing: Array = None):
         return self.call
 
     def call(self, X1, X2):
         X1, X2 = self.slice_inputs(X1, X2)
-        if self.training:
+        if self._training:
             return (X1 @ X2.T + self.center()) ** self.order, 0.0
         else:
             return (X1 @ X2.T + self.center()) ** self.order
@@ -187,43 +236,61 @@ class Polynomial(Kernel):
         return "Polynomial"
 
 
+class InputDependentScale(Kernel):
+    def __init__(
+        self,
+        X_inducing: Array,
+        base_kernel: MetaKernel,
+        latent_model: LatentModel = None,
+        active_dims: list = None,
+    ):
+        super(InputDependentScale, self).__init__(X_inducing, active_dims)
+        self.base_kernel = base_kernel
+
+        self.latent_model = latent_model
+        assert self.latent_model.vmap is False, "latent_model must be a non-vmap model."
+
+    def get_kernel_fn(self, X_inducing: Array):
+        def kernel_fn(X1, X2, X_inducing):  # X_inducing is passed here to fix local variable error
+            if self._training:
+                K, log_kernel_prior = self.base_kernel.get_kernel_fn(X_inducing)(X1, X2)
+            else:
+                K = self.base_kernel.get_kernel_fn(X_inducing)(X1, X2)
+
+            X1, X2, X_inducing = self.slice_inputs(X1, X2, X_inducing)
+            sigma_fn = self.latent_model(X_inducing)
+            if self._training:
+                sigma1, log_sigma_prior = sigma_fn(X1)
+                sigma2 = sigma1
+            else:
+                sigma1, sigma2 = sigma_fn(X1), sigma_fn(X2)
+            sigma1, sigma2 = sigma1.reshape(-1, 1), sigma2.reshape(-1, 1)  # 1D only
+            variance = sigma1 * sigma2.T
+
+            if self._training:
+                return variance * K, log_kernel_prior + log_sigma_prior
+            else:
+                return variance * K
+
+        return lambda X1, X2: kernel_fn(X1, X2, X_inducing)
+
+    def __repr__(self) -> str:
+        return f"InputDependentScale({self.base_kernel})"
+
+
 class Gibbs(Kernel):
     def __init__(
         self,
-        X_inducing: Array = None,
-        ell_model: LatentModel = None,
-        sigma_model: LatentModel = None,
-        flex_ell: bool = True,
-        flex_sigma: bool = True,
-        lengthscale: float = 1.0,
-        scale: float = 1.0,
+        X_inducing: Array,
+        ell_model: LatentModel,
         active_dims: list = None,
         ARD: bool = True,
     ):
         super(Gibbs, self).__init__(X_inducing, active_dims)
-        self.flex_ell = flex_ell
-        self.flex_sigma = flex_sigma
         self.ARD = ARD
 
-        lengthscale = jnp.asarray(lengthscale)
-        scale = jnp.asarray(scale)
-
-        if self.flex_ell:
-            self.ell_model = ell_model
-            # assert self.ell_model.vmap is True, "ell_model must be a vmap model."
-        else:
-            if self.ARD:
-                lengthscale = repeat_to_size(lengthscale, X_inducing.shape[1])
-            else:
-                assert lengthscale.shape == (), "lengthscale must be a scalar when ARD=False."
-            self.lengthscale = Parameter(lengthscale, get_positive_bijector())
-
-        if self.flex_sigma:
-            self.sigma_model = sigma_model
-            assert self.sigma_model.vmap is False, "sigma_model must be a non-vmap model."
-        else:
-            assert scale.shape == (), f"scale must be a scalar but got shape={scale.shape}."
-            self.scale = Parameter(scale, get_positive_bijector())
+        self.ell_model = ell_model
+        # assert self.ell_model.vmap is True, "ell_model must be a vmap model."
 
     @staticmethod
     def per_dim_std_cov(X1, X2, ell1, ell2):
@@ -240,57 +307,30 @@ class Gibbs(Kernel):
         exp_part = jnp.exp(-squared_dist / (2.0 * ell_avg_square))
         return prefix_part * exp_part
 
-    def get_kernel_fn(self, X_inducing: Array = None):
-        def kernel_fn(X1, X2, X_inducing):
+    def get_kernel_fn(self, X_inducing: Array):
+        def kernel_fn(X1, X2, X_inducing):  # X_inducing is passed here so that Local Variable error is not raised
             X1, X2, X_inducing = self.slice_inputs(X1, X2, X_inducing)
 
-            #### Lengthscale ####
-            if self.flex_ell:
-                ell_fn = self.ell_model(X_inducing)
-                if self.training:
-                    # X1 and X2 should be the same here
-                    ell1, log_ell_prior = ell_fn(X1)
+            ell_fn = self.ell_model(X_inducing)
+            if self._training:
+                # X1 and X2 should be the same here
+                ell1, log_ell_prior = ell_fn(X1)
 
-                    ell2 = ell1
-                else:
-                    ell1, ell2 = ell_fn(X1), ell_fn(X2)
+                ell2 = ell1
             else:
-                log_ell_prior = jnp.array(0.0)
-                ell1 = self.lengthscale().reshape(1, -1).repeat(X1.shape[0], axis=0)
-                ell2 = self.lengthscale().reshape(1, -1).repeat(X2.shape[0], axis=0)
-                ell1 = jnp.atleast_1d(ell1)
-                ell2 = jnp.atleast_1d(ell2)
+                ell1, ell2 = ell_fn(X1), ell_fn(X2)
 
             if self.ARD:
-
                 std_cov = jax.vmap(self.per_dim_std_cov, in_axes=(1, 1, 1, 1), out_axes=2)(X1, X2, ell1, ell2).prod(
                     axis=2
                 )
             else:
                 std_cov = self.per_dim_std_cov(X1, X2, ell1, ell2)
 
-            #### Scale ####
-            if self.flex_sigma:
-                sigma_fn = self.sigma_model(X_inducing)
-                if self.training:
-                    sigma1, log_sigma_prior = sigma_fn(X1)
-                    sigma2 = sigma1
-                else:
-                    sigma1, sigma2 = sigma_fn(X1), sigma_fn(X2)
-            else:
-                log_sigma_prior = jnp.array(0.0)
-                sigma1 = self.scale().reshape(1, 1).repeat(X1.shape[0], axis=0).squeeze()
-                sigma2 = self.scale().reshape(1, 1).repeat(X2.shape[0], axis=0).squeeze()
-                sigma1 = jnp.atleast_1d(sigma1)
-                sigma2 = jnp.atleast_1d(sigma2)
-
-            sigma1, sigma2 = sigma1.reshape(-1, 1), sigma2.reshape(-1, 1)  # 1D only
-            variance = sigma1 * sigma2.T
-
-            if self.training:
+            if self._training:
                 # print(f"{log_ell_prior.sum()=:.20f}, {log_sigma_prior=:.20f}", end=" ")  # DEBUG
-                return variance * std_cov, log_ell_prior.sum() + log_sigma_prior
+                return std_cov, log_ell_prior.sum()
             else:
-                return variance * std_cov
+                return std_cov
 
         return lambda X1, X2: kernel_fn(X1, X2, X_inducing)

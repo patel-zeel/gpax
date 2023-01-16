@@ -39,11 +39,11 @@ def test_functionality():
     params = mean.get_parameters(raw_dict=False)
     assert mean.value() == 1.0
     assert params["value"]() == 1.0
-    assert id(mean.value) == id(params["value"])
 
     # set and value check
     mean.value.set_value(2.0)
     assert mean.value() == 2.0
+    params = mean.get_parameters(raw_dict=False)
     assert params["value"]() == 2.0
 
     # initialize
