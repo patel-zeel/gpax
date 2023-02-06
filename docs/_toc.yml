@@ -5,6 +5,7 @@ parts:
     chapters:
       - file: notebooks/simple_gp
       - file: notebooks/kernel_combinations
+      - file: notebooks/nonstat_hetero_models
   - caption: API Reference
     chapters:
       - file: notebooks/core

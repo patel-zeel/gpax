@@ -66,7 +66,7 @@ class LatentGP(LatentModel):
             # latent = jnp.linalg.solve(chol, raw_value)
             return latent
 
-        # value = jnp.asarray(value)
+        value = jnp.asarray(value)
         assert value.size in (1, self.latent().size)
         if value.size == 1:
             value = jnp.ones(self.latent().shape) * value
@@ -244,7 +244,7 @@ class LatentGPPlagemann(LatentGP):
 
 
 class GP(Model):
-    def plot(self, X, y, X_test, ax=None, alpha=0.3):
+    def plot(self, X, y, X_test, ax=None, alpha=0.3, s=20):
         if X.shape[1] > 1:
             raise NotImplementedError("Only 1D inputs are supported")
 
@@ -257,11 +257,12 @@ class GP(Model):
 
         pred_mean, pred_cov = self.predict(X, y, X_test, include_noise=False)
         pred_noise_scale = likelihood_fn(X_test)
-        assert pred_noise_scale > 0.0
+        assert jnp.all(pred_noise_scale >= 0.0)
 
         pred_mean = pred_mean.squeeze()
         pred_std = jnp.sqrt(jnp.diag(pred_cov))
-        ax.scatter(X, y, label="Observations")
+        pred_noisy_std = jnp.sqrt(jnp.diag(pred_cov) + pred_noise_scale**2)
+        ax.scatter(X, y, s=s, label="Observations")
         ax.plot(X_test, pred_mean, label="Posterior mean")
         ax.fill_between(
             X_test.ravel(),
@@ -272,8 +273,8 @@ class GP(Model):
         )
         ax.fill_between(
             X_test.ravel(),
-            pred_mean - 2 * pred_std - 2 * pred_noise_scale,
-            pred_mean + 2 * pred_std + 2 * pred_noise_scale,
+            pred_mean - 2 * pred_noisy_std,
+            pred_mean + 2 * pred_noisy_std,
             alpha=alpha,
             label="95% CI + noise",
         )
@@ -296,9 +297,20 @@ class ExactGPRegression(GP):
         self.likelihood = likelihood
         self.mean = mean
         if X_inducing is not None:
-            self.X_inducing = Parameter(X_inducing, fixed_init=True)
+            self.X_inducing = Parameter(X_inducing)
         else:
             self.X_inducing = lambda: None
+
+        # post process
+        assert likelihood.__class__.__name__ in ["Gaussian", "Heteroscedastic"]
+        if likelihood.__class__.__name__ == "Heteroscedastic":
+            assert likelihood.latent_model.__class__.__name__ in [
+                "LatentGPHeinonen",
+                "LatentGPPlagemann",
+                "LatentGPDeltaInducing",
+            ]
+            if likelihood.latent_model.__class__.__name__ == "LatentGPHeinonen":
+                self.X_inducing.trainable(False)
 
     def log_probability(self, X, y, include_prior=True):
         self.train()  # Set model to train mode
@@ -335,8 +347,11 @@ class ExactGPRegression(GP):
         else:
             return log_likelihood
 
-    def fit(self, key, X, y, lr=0.01, epochs=100):
+    def fit(self, key, X, y, customize_fn=lambda x: None, lr=0.01, epochs=100):
         self.initialize(key)
+
+        customize_fn(self)
+
         init_raw_params = self.get_raw_parameters()
         optimizer = optax.adam(learning_rate=lr)
         init_state = optimizer.init(init_raw_params)
