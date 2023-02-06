@@ -104,7 +104,7 @@ class Parameter:
 
     def set_value(self, value):
         value = jnp.asarray(value)
-        assert jnp.asarray(value).shape == self._shape, f"{value.shape} != {self._shape}"
+        assert value.shape == self._shape, f"{value.shape} != {self._shape}"
         raw_value = self.bijector.inverse(value)
         self.set_raw_value(raw_value)
 
@@ -232,6 +232,7 @@ class Module:
         for param in self._parameters.values():
             param.initialize(key2)
             key2 = jax.random.split(key2, num=1)[0]
+        return self
 
     def log_prob(self, reduce=True):
         log_probs = {}

@@ -1,10 +1,11 @@
 format: jb-book
 root: intro
 parts:
-  - caption: Documentation
+  - caption: Examples
     chapters:
-      - file: docs/core
-      - file: docs/module
-  # - caption: Examples
-  #   chapters:
-  #     - file: docs/notebooks/probability/univariate-normal-expectations
+      - file: notebooks/simple_gp
+      - file: notebooks/kernel_combinations
+  - caption: API Reference
+    chapters:
+      - file: notebooks/core
+      - file: notebooks/module

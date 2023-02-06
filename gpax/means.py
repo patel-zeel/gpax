@@ -22,7 +22,13 @@ class Scalar(Mean):
     def __call__(self, y):
         return self.value.get_value()  # or self.value()
 
+    def __repr__(self) -> str:
+        return f"Scalar"
+
 
 class Average(Mean):
     def __call__(self, y):
         return y.mean()
+
+    def __repr__(self) -> str:
+        return f"Average"

@@ -35,6 +35,9 @@ class Gaussian(Likelihood):
         else:
             return self.scale.get_value()
 
+    def __repr__(self) -> str:
+        return f"Gaussian"
+
 
 class Heteroscedastic(Likelihood):
     def __init__(
@@ -46,3 +49,6 @@ class Heteroscedastic(Likelihood):
 
     def get_likelihood_fn(self, X_inducing: Array = None):
         return self.latent_model(X_inducing)
+
+    def __repr__(self) -> str:
+        return f"Heteroscedastic"

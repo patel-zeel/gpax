@@ -14,7 +14,7 @@ import gpax.kernels as gpk
 
 from tests.utils import assert_same_pytree
 
-from GPy.kern import RBF as EQ, Matern32, Matern52, Exponential, Poly, StdPeriodic
+from GPy.kern import RBF as EQ, Matern32, Matern52, Exponential, Poly, StdPeriodic, RatQuad
 
 # jax 64 bit mode
 jax.config.update("jax_enable_x64", True)
@@ -31,6 +31,7 @@ jax.config.update("jax_enable_x64", True)
         (gpk.Matern12, Exponential),
         (gpk.Matern32, Matern32),
         (gpk.Matern52, Matern52),
+        (gpk.RationalQuadratic, RatQuad),
         (gpk.Polynomial, Poly),
         (gpk.Periodic, StdPeriodic),
     ],
@@ -49,7 +50,23 @@ def test_execution(X, kernel, gpy_kernel, ls, scale):
 
         assert jnp.allclose(ours, gpy_vals)
 
+    elif kernel is gpk.RationalQuadratic:
+        alpha = 2.7
+        base_kernel = kernel(X=X, alpha=alpha, lengthscale=ls)
+        kernel = gpk.Scale(X, base_kernel, variance=scale**2)
+        kernel_fn = kernel.eval().get_kernel_fn()
+        params = kernel.get_parameters()
+
+        gpy_kernel = gpy_kernel(X.shape[1], power=alpha, lengthscale=ls, variance=scale**2)
+
+        ours = kernel_fn(X, X)
+        gpy_vals = gpy_kernel.K(X, X)
+
+        assert jnp.allclose(ours, gpy_vals)
+
     elif kernel is gpk.Periodic:
+        if X.shape[1] > 1:
+            pytest.skip("Periodic kernel is only implemented for 1D inputs")
         # TODO: fix this test and the periodic kernel
         period = 2.3
         base_kernel = kernel(X=X, period=period, lengthscale=ls)
@@ -69,7 +86,7 @@ def test_execution(X, kernel, gpy_kernel, ls, scale):
         kernel = gpk.Scale(X, base_kernel, variance=scale**2)
         kernel_fn = kernel.eval().get_kernel_fn()
         params = kernel.get_parameters()
-        assert len(params["kernel"]["lengthscale"]) == X.shape[1]
+        assert len(params["base_kernel"]["lengthscale"]) == X.shape[1]
         kernel_gpy = gpy_kernel(X.shape[1], lengthscale=ls, variance=scale**2, ARD=True)
         ours = kernel_fn(X, X)
         gpy_vals = kernel_gpy.K(X, X)

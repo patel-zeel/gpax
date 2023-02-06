@@ -13,6 +13,8 @@ tfd = tfp.distributions
 from gpax.core import Module, Parameter, get_default_jitter, get_positive_bijector
 from gpax.utils import add_to_diagonal, get_a_inv_b, repeat_to_size
 
+import matplotlib.pyplot as plt
+
 import optax
 
 from jaxtyping import Array, Float
@@ -64,7 +66,7 @@ class LatentGP(LatentModel):
             # latent = jnp.linalg.solve(chol, raw_value)
             return latent
 
-        value = jnp.asarray(value)
+        # value = jnp.asarray(value)
         assert value.size in (1, self.latent().size)
         if value.size == 1:
             value = jnp.ones(self.latent().shape) * value
@@ -241,7 +243,47 @@ class LatentGPPlagemann(LatentGP):
         return predict_fn
 
 
-class ExactGPRegression(Model):
+class GP(Model):
+    def plot(self, X, y, X_test, ax=None, alpha=0.3):
+        if X.shape[1] > 1:
+            raise NotImplementedError("Only 1D inputs are supported")
+
+        if ax is None:
+            ax = plt.gca()
+
+        self.eval()
+        X_inducing = self.X_inducing()
+        likelihood_fn = self.likelihood.get_likelihood_fn(X_inducing)
+
+        pred_mean, pred_cov = self.predict(X, y, X_test, include_noise=False)
+        pred_noise_scale = likelihood_fn(X_test)
+        assert pred_noise_scale > 0.0
+
+        pred_mean = pred_mean.squeeze()
+        pred_std = jnp.sqrt(jnp.diag(pred_cov))
+        ax.scatter(X, y, label="Observations")
+        ax.plot(X_test, pred_mean, label="Posterior mean")
+        ax.fill_between(
+            X_test.ravel(),
+            pred_mean - 2 * pred_std,
+            pred_mean + 2 * pred_std,
+            alpha=alpha,
+            label="95% CI",
+        )
+        ax.fill_between(
+            X_test.ravel(),
+            pred_mean - 2 * pred_std - 2 * pred_noise_scale,
+            pred_mean + 2 * pred_std + 2 * pred_noise_scale,
+            alpha=alpha,
+            label="95% CI + noise",
+        )
+        ax.legend(bbox_to_anchor=(1.05, 1), loc="upper right")
+
+        return ax
+
+
+# @jtu.register_pytree_node_class
+class ExactGPRegression(GP):
     def __init__(
         self,
         kernel: Kernel,
@@ -259,7 +301,7 @@ class ExactGPRegression(Model):
             self.X_inducing = lambda: None
 
     def log_probability(self, X, y, include_prior=True):
-        self.train()
+        self.train()  # Set model to train mode
         """
         prior_type: default: None, possible values: "prior", "posterior", None
         """
@@ -295,9 +337,9 @@ class ExactGPRegression(Model):
 
     def fit(self, key, X, y, lr=0.01, epochs=100):
         self.initialize(key)
-        raw_params = self.get_raw_parameters()
-        optimizer = optax.adam(learing_rate=lr)
-        init_state = optimizer.init(raw_params)
+        init_raw_params = self.get_raw_parameters()
+        optimizer = optax.adam(learning_rate=lr)
+        init_state = optimizer.init(init_raw_params)
 
         def loss_fn(raw_params):
             self.set_raw_parameters(raw_params)
@@ -313,7 +355,7 @@ class ExactGPRegression(Model):
             return (raw_params, state), (raw_params, loss)
 
         (raw_params, state), (raw_params_history, loss_history) = jax.lax.scan(
-            f=one_step, init=(raw_params, state), xs=None, length=epochs
+            f=one_step, init=(init_raw_params, init_state), xs=None, length=epochs
         )
 
         self.set_raw_parameters(raw_params)
@@ -396,6 +438,21 @@ class ExactGPRegression(Model):
         """
         predict_fn = self.condition(X, y)
         return predict_fn(X_test, return_cov=return_cov, include_noise=include_noise)
+
+    def tree_flatten(self):
+        raw_params = self.get_raw_parameters()
+        flat_params, treedef = jtu.tree_flatten(raw_params)
+        return flat_params, (treedef, self.kernel, self.likelihood, self.mean)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, flat_params):
+        (treedef, kernel, likelihood, mean) = aux_data
+        # obj =
+        # raw_params = jtu.tree_unflatten(treedef, flat_params)
+        # obj.set_raw_parameters(raw_params)
+        obj = cls(kernel, likelihood, mean)
+        obj.kernel.variance.set_raw_value(flat_params[1])
+        return obj
 
 
 class SparseGPRegression(Model):

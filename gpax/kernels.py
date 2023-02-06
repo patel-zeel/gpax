@@ -172,6 +172,9 @@ class Matern12(Smooth):
         return "Matern12"
 
 
+Exponential = Matern12
+
+
 class Matern32(Smooth):
     def pair_wise(self, x1, x2):
         x1 = x1 / self.lengthscale()
@@ -196,6 +199,28 @@ class Matern52(Smooth):
         return "Matern52"
 
 
+class RationalQuadratic(Smooth):
+    def __init__(
+        self,
+        X: Array,
+        lengthscale: float = 1.0,
+        alpha: float = 1.0,
+        active_dims: list = None,
+        ARD: bool = True,
+    ):
+        super(RationalQuadratic, self).__init__(X, lengthscale, active_dims, ARD)
+        self.alpha = Parameter(alpha, get_positive_bijector())
+
+    def pair_wise(self, x1, x2):
+        x1 = x1 / self.lengthscale()
+        x2 = x2 / self.lengthscale()
+        arg = squared_distance(x1, x2)
+        return (1.0 + arg / 2.0) ** (-self.alpha())
+
+    def __repr__(self) -> str:
+        return "RationalQuadratic"
+
+
 class Periodic(Smooth):
     def __init__(
         self,
@@ -206,11 +231,12 @@ class Periodic(Smooth):
         ARD: bool = True,
     ):
         super(Periodic, self).__init__(X, lengthscale, active_dims, ARD)
+        assert X.shape[1] == 1, "Periodic kernel only supports 1D inputs."
         self.period = Parameter(period, get_positive_bijector())
 
     def pair_wise(self, x1, x2):
         arg = jnp.sin(jnp.pi * distance(x1, x2) / self.period())
-        return jnp.exp(-2.0 * jnp.square(arg) / self.lengthscale()).squeeze()
+        return jnp.exp(-0.5 * jnp.square(arg / self.lengthscale())).squeeze()
 
     def __repr__(self) -> str:
         return "Periodic"
