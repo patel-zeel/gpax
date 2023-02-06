@@ -116,7 +116,24 @@ const thebe_selector_output = ".output, .cell_output"
         </ul>
         <p aria-level="2" class="caption" role="heading">
  <span class="caption-text">
-  Documentation
+  Examples
+ </span>
+</p>
+<ul class="nav bd-sidenav">
+ <li class="toctree-l1">
+  <a class="reference internal" href="simple_gp.html">
+   Simple GP Regression
+  </a>
+ </li>
+ <li class="toctree-l1">
+  <a class="reference internal" href="kernel_combinations.html">
+   Kernel combinations
+  </a>
+ </li>
+</ul>
+<p aria-level="2" class="caption" role="heading">
+ <span class="caption-text">
+  API Reference
  </span>
 </p>
 <ul class="current nav bd-sidenav">
@@ -189,7 +206,7 @@ title="Toggle navigation"
   <div class="menu-dropdown__content">
     <ul>
       <li>
-        <a href="https://mybinder.org/v2/gh/patel-zeel/gpax/main?urlpath=tree/docs/module.ipynb"
+        <a href="https://mybinder.org/v2/gh/patel-zeel/gpax/main?urlpath=tree/notebooks/module.ipynb"
    class="headerbtn"
    data-toggle="tooltip"
 data-placement="left"
@@ -207,7 +224,7 @@ title="Launch on Binder"
       </li>
       
       <li>
-        <a href="https://colab.research.google.com/github/patel-zeel/gpax/blob/main/docs/module.ipynb"
+        <a href="https://colab.research.google.com/github/patel-zeel/gpax/blob/main/notebooks/module.ipynb"
    class="headerbtn"
    data-toggle="tooltip"
 data-placement="left"
@@ -285,7 +302,7 @@ title="Source repository"
       </li>
       
       <li>
-        <a href="https://github.com/patel-zeel/gpax/issues/new?title=Issue%20on%20page%20%2Fdocs/module.html&body=Your%20issue%20content%20here."
+        <a href="https://github.com/patel-zeel/gpax/issues/new?title=Issue%20on%20page%20%2Fnotebooks/module.html&body=Your%20issue%20content%20here."
    class="headerbtn"
    data-toggle="tooltip"
 data-placement="left"
@@ -302,7 +319,7 @@ title="Open an issue"
       </li>
       
       <li>
-        <a href="https://github.com/patel-zeel/gpax/edit/main/docs/module.ipynb"
+        <a href="https://github.com/patel-zeel/gpax/edit/main/notebooks/module.ipynb"
    class="headerbtn"
    data-toggle="tooltip"
 data-placement="left"
@@ -330,7 +347,7 @@ title="Edit this page"
   <div class="menu-dropdown__content">
     <ul>
       <li>
-        <a href="../_sources/docs/module.ipynb"
+        <a href="../_sources/notebooks/module.ipynb"
    class="headerbtn"
    data-toggle="tooltip"
 data-placement="left"
@@ -505,7 +522,7 @@ title="Print to PDF"
 <div class="cell_input docutils container">
 <div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">os</span>
 
-<span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;CUDA_VISIBLE_DEVICES&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;0&quot;</span>
+<span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;CUDA_VISIBLE_DEVICES&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
 
 <span class="kn">import</span> <span class="nn">jax</span>
 <span class="kn">import</span> <span class="nn">jax.numpy</span> <span class="k">as</span> <span class="nn">jnp</span>
@@ -526,6 +543,12 @@ title="Print to PDF"
 </pre></div>
 </div>
 </div>
+<div class="cell_output docutils container">
+<div class="output stderr highlight-myst-ansi notranslate"><div class="highlight"><pre><span></span>/home/patel_zeel/miniconda3/envs/jax_gpu/lib/python3.9/site-packages/pkg_resources/__init__.py:122: PkgResourcesDeprecationWarning: LOCAL is an invalid version and will not be supported in a future release
+  warnings.warn(
+</pre></div>
+</div>
+</div>
 </div>
 <section id="kernels">
 <h2>Kernels<a class="headerlink" href="#kernels" title="Permalink to this headline">#</a></h2>
@@ -541,16 +564,20 @@ k(x, x') = \sigma^2 \exp\left(-\frac{1}{2l^2} (x - x')^2\right)
 <div class="cell docutils container">
 <div class="cell_input docutils container">
 <div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">X</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">20</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
-<span class="n">lengthscale</span> <span class="o">=</span> <span class="mf">0.1</span>
-<span class="n">variance</span> <span class="o">=</span> <span class="mf">0.5</span>
+<span class="n">lengthscale</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="mf">0.1</span><span class="p">)</span>
+<span class="n">variance</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
 
-<span class="n">base_kernel</span> <span class="o">=</span> <span class="n">gpk</span><span class="o">.</span><span class="n">RBF</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">lengthscale</span><span class="o">=</span><span class="mf">0.1</span><span class="p">)</span>
+<span class="n">base_kernel</span> <span class="o">=</span> <span class="n">gpk</span><span class="o">.</span><span class="n">RBF</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">lengthscale</span><span class="o">=</span><span class="n">lengthscale</span><span class="p">)</span>
 <span class="n">kernel</span> <span class="o">=</span> <span class="n">variance</span> <span class="o">*</span> <span class="n">base_kernel</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">kernel</span><span class="p">)</span>
 </pre></div>
 </div>
 </div>
 <div class="cell_output docutils container">
+<div class="output stderr highlight-myst-ansi notranslate"><div class="highlight"><pre><span></span>2023-02-02 11:48:35.362648: E external/org_tensorflow/tensorflow/compiler/xla/stream_executor/cuda/cuda_driver.cc:267] failed call to cuInit: CUDA_ERROR_NO_DEVICE: no CUDA-capable device is detected
+WARNING:jax._src.lib.xla_bridge:No GPU/TPU found, falling back to CPU. (Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)
+</pre></div>
+</div>
 <div class="output stream highlight-myst-ansi notranslate"><div class="highlight"><pre><span></span>Scale(RBF)
 </pre></div>
 </div>
@@ -610,12 +637,12 @@ k(x, x') = \sigma^2 \exp\left(-\frac{1}{2l^2} (x - x')^2\right)
 </table>
 <div class="cell docutils container">
 <div class="cell_input docutils container">
-<div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">lengthscale</span> <span class="o">=</span> <span class="mf">0.1</span>
+<div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">lengthscale</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="mf">0.1</span><span class="p">)</span>
 
 <span class="n">matern32</span> <span class="o">=</span> <span class="n">variance</span> <span class="o">*</span> <span class="n">gpk</span><span class="o">.</span><span class="n">Matern32</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">lengthscale</span><span class="p">)</span>
 <span class="n">matern12</span> <span class="o">=</span> <span class="n">variance</span> <span class="o">*</span> <span class="n">gpk</span><span class="o">.</span><span class="n">Matern12</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">lengthscale</span><span class="p">)</span>
 <span class="n">matern52</span> <span class="o">=</span> <span class="n">variance</span> <span class="o">*</span> <span class="n">gpk</span><span class="o">.</span><span class="n">Matern52</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">lengthscale</span><span class="p">)</span>
-<span class="n">periodic</span> <span class="o">=</span> <span class="n">variance</span> <span class="o">*</span> <span class="n">gpk</span><span class="o">.</span><span class="n">Periodic</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">lengthscale</span><span class="p">,</span> <span class="n">period</span><span class="o">=</span><span class="mf">0.2</span><span class="p">)</span>
+<span class="n">periodic</span> <span class="o">=</span> <span class="n">variance</span> <span class="o">*</span> <span class="n">gpk</span><span class="o">.</span><span class="n">Periodic</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">lengthscale</span><span class="p">,</span> <span class="n">period</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="mf">0.2</span><span class="p">))</span>
 </pre></div>
 </div>
 </div>
@@ -665,7 +692,7 @@ k(x, x') = \sigma^2 \exp\left(-\frac{1}{2l^2} (x - x')^2\right)
 <p>Fixing a constant variance for all inputs. This could be a good initialization for the input-dependent variance kernel.</p>
 <div class="cell docutils container">
 <div class="cell_input docutils container">
-<div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">kernel</span><span class="o">.</span><span class="n">latent_model</span><span class="o">.</span><span class="n">reverse_init</span><span class="p">(</span><span class="mf">0.1</span><span class="p">)</span>
+<div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">kernel</span><span class="o">.</span><span class="n">latent_model</span><span class="o">.</span><span class="n">reverse_init</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="mf">0.1</span><span class="p">))</span>
 <span class="n">ax</span> <span class="o">=</span> <span class="n">plot_kernel</span><span class="p">()</span>
 <span class="n">ax</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">set_ylim</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mf">0.02</span><span class="p">);</span>
 </pre></div>
@@ -693,8 +720,125 @@ k(x, x') = \sigma^2 \exp\left(-\frac{1}{2l^2} (x - x')^2\right)
 </section>
 <section id="models">
 <h2>Models<a class="headerlink" href="#models" title="Permalink to this headline">#</a></h2>
+<div class="cell docutils container">
+<div class="cell_input docutils container">
+<div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">X</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">50</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+<span class="n">X_test</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">100</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+<span class="n">key</span> <span class="o">=</span> <span class="n">jax</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">PRNGKey</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
+<span class="n">y</span> <span class="o">=</span> <span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">jnp</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="n">X</span><span class="p">)</span> <span class="o">+</span> <span class="n">jax</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">X</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.2</span><span class="p">)</span><span class="o">.</span><span class="n">squeeze</span><span class="p">()</span>
+
+<span class="n">plt</span><span class="o">.</span><span class="n">scatter</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">);</span>
+</pre></div>
+</div>
+</div>
+<div class="cell_output docutils container">
+<img alt="../_images/module_27_0.png" src="../_images/module_27_0.png" />
+</div>
+</div>
+<div class="cell docutils container">
+<div class="cell_input docutils container">
+<div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">kernel</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">*</span> <span class="n">gpk</span><span class="o">.</span><span class="n">RBF</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">lengthscale</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="mf">0.1</span><span class="p">))</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">gpm</span><span class="o">.</span><span class="n">ExactGPRegression</span><span class="p">(</span><span class="n">kernel</span><span class="p">,</span> <span class="n">gpl</span><span class="o">.</span><span class="n">Gaussian</span><span class="p">(</span><span class="n">scale</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)),</span> <span class="n">Scalar</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)))</span>
+<span class="n">key</span> <span class="o">=</span> <span class="n">jax</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">PRNGKey</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">keys</span> <span class="o">=</span> <span class="n">jax</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">fit_fn</span><span class="p">(</span><span class="n">key</span><span class="p">):</span>
+    <span class="c1"># model.fit(key, X, y, lr=0.01, epochs=100)</span>
+    <span class="k">return</span> <span class="n">model</span>
+
+<span class="n">models</span> <span class="o">=</span> <span class="n">jax</span><span class="o">.</span><span class="n">vmap</span><span class="p">(</span><span class="n">fit_fn</span><span class="p">)(</span><span class="n">keys</span><span class="p">)</span>
+
+<span class="c1"># pred_mean, pred_cov = model.predict(X, y, X_test)</span>
+
+<span class="c1"># plt.scatter(X, y)</span>
+<span class="c1"># plt.plot(X_test, pred_mean, color=&#39;red&#39;);</span>
+<span class="c1"># plt.fill_between(</span>
+<span class="c1">#     X_test.squeeze(),</span>
+<span class="c1">#     pred_mean - 2 * jnp.sqrt(pred_cov.diagonal()),</span>
+<span class="c1">#     pred_mean + 2 * jnp.sqrt(pred_cov.diagonal()),</span>
+<span class="c1">#     color=&#39;red&#39;,</span>
+<span class="c1">#     alpha=0.2,</span>
+<span class="c1"># );</span>
+<span class="c1"># jtu.tree_leaves(models)</span>
+</pre></div>
+</div>
+</div>
+<div class="cell_output docutils container">
+<div class="output traceback highlight-ipythontb notranslate"><div class="highlight"><pre><span></span><span class="gt">---------------------------------------------------------------------------</span>
+<span class="ne">ValueError</span><span class="g g-Whitespace">                                </span>Traceback (most recent call last)
+<span class="nn">/home/patel_zeel/gpax/docs/docs/module.ipynb Cell 29</span> in <span class="ni">&lt;cell line: 10&gt;</span><span class="nt">()</span>
+      <span class="o">&lt;</span><span class="n">a</span> <span class="n">href</span><span class="o">=</span><span class="s1">&#39;vscode-notebook-cell://ssh-remote%2B7b22686f73744e616d65223a2252616d616e756a616e227d/home/patel_zeel/gpax/docs/docs/module.ipynb#X45sdnNjb2RlLXJlbW90ZQ%3D%3D?line=5&#39;</span><span class="o">&gt;</span><span class="mi">6</span><span class="o">&lt;/</span><span class="n">a</span><span class="o">&gt;</span> <span class="k">def</span> <span class="nf">fit_fn</span><span class="p">(</span><span class="n">key</span><span class="p">):</span>
+      <span class="o">&lt;</span><span class="n">a</span> <span class="n">href</span><span class="o">=</span><span class="s1">&#39;vscode-notebook-cell://ssh-remote%2B7b22686f73744e616d65223a2252616d616e756a616e227d/home/patel_zeel/gpax/docs/docs/module.ipynb#X45sdnNjb2RlLXJlbW90ZQ%3D%3D?line=6&#39;</span><span class="o">&gt;</span><span class="mi">7</span><span class="o">&lt;/</span><span class="n">a</span><span class="o">&gt;</span>     <span class="c1"># model.fit(key, X, y, lr=0.01, epochs=100)</span>
+      <span class="o">&lt;</span><span class="n">a</span> <span class="n">href</span><span class="o">=</span><span class="s1">&#39;vscode-notebook-cell://ssh-remote%2B7b22686f73744e616d65223a2252616d616e756a616e227d/home/patel_zeel/gpax/docs/docs/module.ipynb#X45sdnNjb2RlLXJlbW90ZQ%3D%3D?line=7&#39;</span><span class="o">&gt;</span><span class="mi">8</span><span class="o">&lt;/</span><span class="n">a</span><span class="o">&gt;</span>     <span class="k">return</span> <span class="n">model</span>
+<span class="o">---&gt;</span> <span class="o">&lt;</span><span class="n">a</span> <span class="n">href</span><span class="o">=</span><span class="s1">&#39;vscode-notebook-cell://ssh-remote%2B7b22686f73744e616d65223a2252616d616e756a616e227d/home/patel_zeel/gpax/docs/docs/module.ipynb#X45sdnNjb2RlLXJlbW90ZQ%3D%3D?line=9&#39;</span><span class="o">&gt;</span><span class="mi">10</span><span class="o">&lt;/</span><span class="n">a</span><span class="o">&gt;</span> <span class="n">models</span> <span class="o">=</span> <span class="n">jax</span><span class="o">.</span><span class="n">vmap</span><span class="p">(</span><span class="n">fit_fn</span><span class="p">)(</span><span class="n">keys</span><span class="p">)</span>
+     <span class="o">&lt;</span><span class="n">a</span> <span class="n">href</span><span class="o">=</span><span class="s1">&#39;vscode-notebook-cell://ssh-remote%2B7b22686f73744e616d65223a2252616d616e756a616e227d/home/patel_zeel/gpax/docs/docs/module.ipynb#X45sdnNjb2RlLXJlbW90ZQ%3D%3D?line=11&#39;</span><span class="o">&gt;</span><span class="mi">12</span><span class="o">&lt;/</span><span class="n">a</span><span class="o">&gt;</span> <span class="c1"># pred_mean, pred_cov = model.predict(X, y, X_test)</span>
+     <span class="o">&lt;</span><span class="n">a</span> <span class="n">href</span><span class="o">=</span><span class="s1">&#39;vscode-notebook-cell://ssh-remote%2B7b22686f73744e616d65223a2252616d616e756a616e227d/home/patel_zeel/gpax/docs/docs/module.ipynb#X45sdnNjb2RlLXJlbW90ZQ%3D%3D?line=12&#39;</span><span class="o">&gt;</span><span class="mi">13</span><span class="o">&lt;/</span><span class="n">a</span><span class="o">&gt;</span> 
+     <span class="o">&lt;</span><span class="n">a</span> <span class="n">href</span><span class="o">=</span><span class="s1">&#39;vscode-notebook-cell://ssh-remote%2B7b22686f73744e616d65223a2252616d616e756a616e227d/home/patel_zeel/gpax/docs/docs/module.ipynb#X45sdnNjb2RlLXJlbW90ZQ%3D%3D?line=13&#39;</span><span class="o">&gt;</span><span class="mi">14</span><span class="o">&lt;/</span><span class="n">a</span><span class="o">&gt;</span> <span class="c1"># plt.scatter(X, y)</span>
+   <span class="p">(</span><span class="o">...</span><span class="p">)</span>
+     <span class="o">&lt;</span><span class="n">a</span> <span class="n">href</span><span class="o">=</span><span class="s1">&#39;vscode-notebook-cell://ssh-remote%2B7b22686f73744e616d65223a2252616d616e756a616e227d/home/patel_zeel/gpax/docs/docs/module.ipynb#X45sdnNjb2RlLXJlbW90ZQ%3D%3D?line=20&#39;</span><span class="o">&gt;</span><span class="mi">21</span><span class="o">&lt;/</span><span class="n">a</span><span class="o">&gt;</span> <span class="c1">#     alpha=0.2,</span>
+     <span class="o">&lt;</span><span class="n">a</span> <span class="n">href</span><span class="o">=</span><span class="s1">&#39;vscode-notebook-cell://ssh-remote%2B7b22686f73744e616d65223a2252616d616e756a616e227d/home/patel_zeel/gpax/docs/docs/module.ipynb#X45sdnNjb2RlLXJlbW90ZQ%3D%3D?line=21&#39;</span><span class="o">&gt;</span><span class="mi">22</span><span class="o">&lt;/</span><span class="n">a</span><span class="o">&gt;</span> <span class="c1"># );</span>
+     <span class="o">&lt;</span><span class="n">a</span> <span class="n">href</span><span class="o">=</span><span class="s1">&#39;vscode-notebook-cell://ssh-remote%2B7b22686f73744e616d65223a2252616d616e756a616e227d/home/patel_zeel/gpax/docs/docs/module.ipynb#X45sdnNjb2RlLXJlbW90ZQ%3D%3D?line=22&#39;</span><span class="o">&gt;</span><span class="mi">23</span><span class="o">&lt;/</span><span class="n">a</span><span class="o">&gt;</span> <span class="n">jtu</span><span class="o">.</span><span class="n">tree_leaves</span><span class="p">(</span><span class="n">models</span><span class="p">)</span>
+
+    <span class="p">[</span><span class="o">...</span> <span class="n">skipping</span> <span class="n">hidden</span> <span class="mi">5</span> <span class="n">frame</span><span class="p">]</span>
+
+<span class="nn">File ~/miniconda3/envs/jax_gpu/lib/python3.9/site-packages/jax/_src/api_util.py:418,</span> in <span class="ni">flatten_axes</span><span class="nt">(name, treedef, axis_tree, kws, tupled_args)</span>
+<span class="g g-Whitespace">    </span><span class="mi">414</span>       <span class="k">else</span><span class="p">:</span>
+<span class="g g-Whitespace">    </span><span class="mi">415</span>         <span class="n">hint</span> <span class="o">+=</span> <span class="p">(</span><span class="sa">f</span><span class="s2">&quot; In particular, you&#39;re passing in a single argument which &quot;</span>
+<span class="g g-Whitespace">    </span><span class="mi">416</span>                  <span class="sa">f</span><span class="s2">&quot;means that </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> might need to be wrapped in &quot;</span>
+<span class="g g-Whitespace">    </span><span class="mi">417</span>                  <span class="sa">f</span><span class="s2">&quot;a singleton tuple.&quot;</span><span class="p">)</span>
+<span class="ne">--&gt; </span><span class="mi">418</span>   <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> specification must be a tree prefix of the &quot;</span>
+<span class="g g-Whitespace">    </span><span class="mi">419</span>                    <span class="sa">f</span><span class="s2">&quot;corresponding value, got specification </span><span class="si">{</span><span class="n">axis_tree</span><span class="si">}</span><span class="s2"> &quot;</span>
+<span class="g g-Whitespace">    </span><span class="mi">420</span>                    <span class="sa">f</span><span class="s2">&quot;for value tree </span><span class="si">{</span><span class="n">treedef</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">hint</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span> <span class="kn">from</span> <span class="bp">None</span>
+<span class="g g-Whitespace">    </span><span class="mi">421</span> <span class="n">axes</span> <span class="o">=</span> <span class="p">[</span><span class="kc">None</span> <span class="k">if</span> <span class="n">a</span> <span class="ow">is</span> <span class="n">proxy</span> <span class="k">else</span> <span class="n">a</span> <span class="k">for</span> <span class="n">a</span> <span class="ow">in</span> <span class="n">axes</span><span class="p">]</span>
+<span class="g g-Whitespace">    </span><span class="mi">422</span> <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">axes</span><span class="p">)</span> <span class="o">==</span> <span class="n">treedef</span><span class="o">.</span><span class="n">num_leaves</span>
+
+<span class="ne">ValueError</span>: vmap out_axes specification must be a tree prefix of the corresponding value, got specification 0 for value tree PyTreeDef(CustomNode(ExactGPRegression[(PyTreeDef({&#39;kernel&#39;: {&#39;base_kernel&#39;: {&#39;lengthscale&#39;: *}, &#39;variance&#39;: *}, &#39;likelihood&#39;: {&#39;scale&#39;: *}, &#39;mean&#39;: {&#39;value&#39;: *}}), Scale(RBF), &lt;gpax.likelihoods.Gaussian object at 0x7fae8c67a520&gt;, &lt;gpax.means.Scalar object at 0x7fae942a9310&gt;)], [*, *, *, *])).
+</pre></div>
+</div>
+</div>
+</div>
 <section id="latent-models">
 <span id="id1"></span><h3>Latent Models<a class="headerlink" href="#latent-models" title="Permalink to this headline">#</a></h3>
+<div class="cell docutils container">
+<div class="cell_input docutils container">
+<div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="nd">@jtu</span><span class="o">.</span><span class="n">register_pytree_node_class</span>
+<span class="k">class</span> <span class="nc">Special</span><span class="p">:</span>
+  <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;init&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">x</span> <span class="o">=</span> <span class="n">x</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">y</span> <span class="o">=</span> <span class="n">y</span>
+  <span class="k">def</span> <span class="nf">tree_flatten</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+    <span class="k">return</span> <span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">x</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">y</span><span class="p">),</span> <span class="bp">self</span><span class="p">)</span>
+  <span class="nd">@classmethod</span>
+  <span class="k">def</span> <span class="nf">tree_unflatten</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">aux</span><span class="p">,</span> <span class="n">children</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;unflatten&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="p">(</span><span class="n">children</span><span class="p">[</span><span class="mi">0</span><span class="p">]))</span>
+    <span class="k">return</span> <span class="n">Special</span><span class="p">(</span><span class="o">*</span><span class="n">children</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">get_it</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">):</span>
+    <span class="n">a</span> <span class="o">=</span> <span class="n">Special</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span>
+    <span class="n">a</span><span class="o">.</span><span class="n">x</span><span class="p">,</span> <span class="n">a</span><span class="o">.</span><span class="n">y</span> <span class="o">=</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span>
+    <span class="k">return</span> <span class="n">a</span>
+
+<span class="n">a</span> <span class="o">=</span> <span class="n">jax</span><span class="o">.</span><span class="n">vmap</span><span class="p">(</span><span class="n">get_it</span><span class="p">)(</span><span class="n">jnp</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span><span class="o">*</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span><span class="o">*</span><span class="mf">1.0</span><span class="p">)</span>
+<span class="n">jtu</span><span class="o">.</span><span class="n">tree_flatten</span><span class="p">(</span><span class="n">a</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="cell_output docutils container">
+<div class="output stream highlight-myst-ansi notranslate"><div class="highlight"><pre><span></span>init &lt;class &#39;jax.interpreters.batching.BatchTracer&#39;&gt;
+unflatten &lt;class &#39;object&#39;&gt;
+init &lt;class &#39;object&#39;&gt;
+unflatten &lt;class &#39;jaxlib.xla_extension.DeviceArray&#39;&gt;
+init &lt;class &#39;jaxlib.xla_extension.DeviceArray&#39;&gt;
+</pre></div>
+</div>
+<div class="output text_plain highlight-myst-ansi notranslate"><div class="highlight"><pre><span></span>([DeviceArray([0., 1., 2.], dtype=float32, weak_type=True),
+  DeviceArray([0., 1., 2.], dtype=float32, weak_type=True)],
+ PyTreeDef(CustomNode(Special[&lt;__main__.Special object at 0x7f629c781f40&gt;], [*, *])))
+</pre></div>
+</div>
+</div>
+</div>
 </section>
 </section>
 </section>
@@ -712,7 +856,7 @@ k(x, x') = \sigma^2 \exp\left(-\frac{1}{2l^2} (x - x')^2\right)
         },
         kernelOptions: {
             kernelName: "python3",
-            path: "./docs"
+            path: "./notebooks"
         },
         predefinedOutput: true
     }
