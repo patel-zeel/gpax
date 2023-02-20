@@ -4,7 +4,7 @@ import jax.scipy as jsp
 import jax.tree_util as jtu
 import optax
 
-distance_jitter = 0.0
+distance_jitter = 1e-36
 
 
 def index_pytree(pytree, index):
@@ -87,12 +87,13 @@ def vectorized_fn(fn, value, shape):
     return fn(value)
 
 
-def squared_distance(X1, X2):
-    return jnp.square(X1 - X2).sum() + distance_jitter
+def squared_distance(x1, x2):
+    return jnp.square(x1 - x2).sum()
 
 
-def distance(X1, X2):
-    return jnp.sqrt(squared_distance(X1, X2))
+def distance(x1, x2):
+    return jnp.sqrt(squared_distance(x1, x2) + distance_jitter)
+    # return jnp.sqrt(jnp.max(squared_distance(x1, x2), distance_jitter))
 
 
 def train_fn(loss_fn, init_raw_params, optimizer, n_iters=1, lax_scan=True):

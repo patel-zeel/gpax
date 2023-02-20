@@ -20,6 +20,20 @@ from GPy.kern import RBF as EQ, Matern32, Matern52, Exponential, Poly, StdPeriod
 jax.config.update("jax_enable_x64", True)
 
 
+def test_active_dims():
+    x = jnp.ones((3, 4)) * jnp.nan
+    x = x.at[:, 2].set(jnp.arange(3))
+
+    kernel = gpk.RBF(x, active_dims=[2])
+    K = kernel.eval().get_kernel_fn()(x, x)
+    assert K.sum() is not jnp.nan
+
+    for each in [0, 1, 3]:
+        kernel = gpk.RBF(x, active_dims=[each])
+        K = kernel.eval().get_kernel_fn()(x, x)
+        assert K.sum() is jnp.nan
+
+
 @pytest.mark.parametrize(
     "X", [jax.random.normal(jax.random.PRNGKey(0), (3, 1)), jax.random.normal(jax.random.PRNGKey(0), (2, 2))]
 )

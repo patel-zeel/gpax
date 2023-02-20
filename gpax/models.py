@@ -15,6 +15,7 @@ from gpax.utils import add_to_diagonal, get_a_inv_b, repeat_to_size
 
 import matplotlib.pyplot as plt
 
+import jaxopt
 import optax
 
 from jaxtyping import Array, Float
@@ -81,6 +82,42 @@ class LatentGP(LatentModel):
         else:
             latent = out_vmap_fn(self.X_inducing, raw_value)
             self.latent.set_raw_value(latent)
+
+
+class LatentGPGaussianBasis(LatentGP):
+    """
+    This method does not have inducing points. Pass full data X to X_inducing argument.
+    """
+
+    def __init__(self, X_inducing, grid_size=None, vmap=False):
+        super(LatentGPGaussianBasis, self).__init__(X_inducing, kernel=None, vmap=vmap)
+        grid_size = 10 if grid_size is None else grid_size
+        upper = X_inducing.max(axis=0)
+        lower = X_inducing.min(axis=0)
+        self.X_grid = jax.vmap(lambda l, u: jnp.linspace(l, u, grid_size))(lower, upper)
+        self.scale = (upper - lower) / (grid_size - 1)
+
+        self.theta = Parameter(
+            jnp.linspace(0.2, 0.8, grid_size).reshape(-1, 1).repeat(X_inducing.shape[1], axis=1),
+            bijector=get_positive_bijector(),
+        )
+
+    def __call__(self, X_inducing):
+        def predict_fn(X):
+            def predict_1d(x, x_grid, scale, theta):
+                pred_y = jax.vmap(lambda x: jsp.stats.norm.pdf(x, loc=x_grid, scale=scale))(x) @ theta
+                return pred_y
+
+            pred_y_fn = jax.vmap(predict_1d, in_axes=(1, 1, 0, 1), out_axes=1)
+            pred_y_dim = pred_y_fn(X, self.X_grid, self.scale, self.theta())
+            pred_y = pred_y_dim.sum(axis=1)
+
+            if self._training:
+                return pred_y, 0.0
+            else:
+                return pred_y
+
+        return predict_fn
 
 
 class LatentGPHeinonen(LatentGP):
@@ -244,6 +281,48 @@ class LatentGPPlagemann(LatentGP):
 
 
 class GP(Model):
+    def fit(
+        self, key, X, y, customize_fn=lambda x: None, lr=0.01, epochs=100, initialize_params=True, optimizer_name="adam"
+    ):
+        if initialize_params:
+            self.initialize(key)
+
+        customize_fn(self)
+
+        init_raw_params = self.get_raw_parameters()
+        if optimizer_name == "adam":
+            optimizer = optax.adam(learning_rate=lr)
+            init_state = optimizer.init(init_raw_params)
+
+            def loss_fn(raw_params):
+                self.set_raw_parameters(raw_params)
+                return -self.log_probability(X, y)
+
+            value_and_grad_fn = jax.value_and_grad(loss_fn)
+
+            @jax.jit
+            def one_step(raw_params_and_state, aux):
+                raw_params, state = raw_params_and_state
+                loss, grads = value_and_grad_fn(raw_params)
+                updates, state = optimizer.update(grads, state)
+                raw_params = optax.apply_updates(raw_params, updates)
+                return (raw_params, state), (raw_params, loss)
+
+            (raw_params, state), (raw_params_history, loss_history) = jax.lax.scan(
+                f=one_step, init=(init_raw_params, init_state), xs=None, length=epochs
+            )
+
+            self.set_raw_parameters(raw_params)
+            return {
+                "raw_params": raw_params,
+                "raw_params_history": raw_params_history,
+                "loss_history": loss_history,
+            }
+        elif optimizer_name == "lbfgs":
+            optimizer = jaxopt.ScipyMinimize(fun=loss_fn)
+            solution = optimizer.run(init_raw_params)
+            return {"raw_params": solution.params}
+
     def plot(self, X, y, X_test, ax=None, alpha=0.3, s=20):
         if X.shape[1] > 1:
             raise NotImplementedError("Only 1D inputs are supported")
@@ -255,13 +334,13 @@ class GP(Model):
         X_inducing = self.X_inducing()
         likelihood_fn = self.likelihood.get_likelihood_fn(X_inducing)
 
-        pred_mean, pred_cov = self.predict(X, y, X_test, include_noise=False)
+        pred_mean, pred_var = self.predict(X, y, X_test, include_noise=False)
         pred_noise_scale = likelihood_fn(X_test)
         assert jnp.all(pred_noise_scale >= 0.0)
 
         pred_mean = pred_mean.squeeze()
-        pred_std = jnp.sqrt(jnp.diag(pred_cov))
-        pred_noisy_std = jnp.sqrt(jnp.diag(pred_cov) + pred_noise_scale**2)
+        pred_std = jnp.sqrt(pred_var)
+        pred_noisy_std = jnp.sqrt(pred_var + pred_noise_scale**2)
         ax.scatter(X, y, s=s, label="Observations")
         ax.plot(X_test, pred_mean, label="Posterior mean")
         ax.fill_between(
@@ -308,6 +387,7 @@ class ExactGPRegression(GP):
                 "LatentGPHeinonen",
                 "LatentGPPlagemann",
                 "LatentGPDeltaInducing",
+                "LatentGPGaussianBasis",
             ]
             if likelihood.latent_model.__class__.__name__ == "LatentGPHeinonen":
                 self.X_inducing.trainable(False)
@@ -343,42 +423,14 @@ class ExactGPRegression(GP):
         #     f"{log_likelihood=:.20f}, {log_prior_likelihood=}, total={log_likelihood + log_prior_kernel + log_prior_likelihood}"
         # )  # DEBUG
         if include_prior:
-            return log_likelihood + log_prior_kernel + log_prior_likelihood
+            log_probability = log_likelihood + log_prior_kernel + log_prior_likelihood
+            # if hasattr(self.likelihood, "latent_model"):
+            #     if self.likelihood.latent_model.__class__.__name__ == "LatentGPGaussianBasis":
+            #         log_probability += self.likelihood.latent_model.theta() ** 2
+            # TODO: cover this within the latent model
+            return log_probability / X.size
         else:
-            return log_likelihood
-
-    def fit(self, key, X, y, customize_fn=lambda x: None, lr=0.01, epochs=100):
-        self.initialize(key)
-
-        customize_fn(self)
-
-        init_raw_params = self.get_raw_parameters()
-        optimizer = optax.adam(learning_rate=lr)
-        init_state = optimizer.init(init_raw_params)
-
-        def loss_fn(raw_params):
-            self.set_raw_parameters(raw_params)
-            return -self.log_probability(X, y)
-
-        value_and_grad_fn = jax.value_and_grad(loss_fn)
-
-        def one_step(raw_params_and_state, aux):
-            raw_params, state = raw_params_and_state
-            loss, grads = value_and_grad_fn(raw_params)
-            updates, state = optimizer.update(grads, state)
-            raw_params = optax.apply_updates(raw_params, updates)
-            return (raw_params, state), (raw_params, loss)
-
-        (raw_params, state), (raw_params_history, loss_history) = jax.lax.scan(
-            f=one_step, init=(init_raw_params, init_state), xs=None, length=epochs
-        )
-
-        self.set_raw_parameters(raw_params)
-        return {
-            "raw_params": raw_params,
-            "raw_params_history": raw_params_history,
-            "loss_history": loss_history,
-        }
+            return log_likelihood / X.size
 
     def nlpd(self, X, y):
         self.train()
@@ -431,28 +483,46 @@ class ExactGPRegression(GP):
         noisy_covariance = add_to_diagonal(train_cov, noise_scale**2, 0.0)
         k_inv_y, k_cholesky = get_a_inv_b(noisy_covariance, y_bar, return_cholesky=True)
 
-        def predict_fn(X_test, return_cov, include_noise):
+        def predict_fn(X_test, return_cov=True, full_cov=False, include_noise=True):
             K_star = kernel_fn(X_test, X)
             pred_mean = K_star @ k_inv_y + mean
 
             if return_cov:
-                k_inv_k_star = jsp.linalg.cho_solve((k_cholesky, True), K_star.T)
-                pred_cov = kernel_fn(X_test, X_test) - (K_star @ k_inv_k_star)
-                if include_noise:
-                    pred_cov = add_to_diagonal(pred_cov, likelihood_fn(X_test) ** 2, 0.0)
-                return pred_mean, pred_cov
+                if full_cov:
+                    k_inv_k_star = jsp.linalg.cho_solve((k_cholesky, True), K_star.T)
+                    pred_cov = kernel_fn(X_test, X_test) - (K_star @ k_inv_k_star)
+                    if include_noise:
+                        noise_var = likelihood_fn(X_test) ** 2
+                        pred_cov = add_to_diagonal(pred_cov, noise_var, 0.0)
+
+                    return pred_mean, pred_cov
+                else:
+
+                    def scalar_var_fn(x_test, k_star):
+                        k_star = k_star.reshape(1, -1)
+                        x_test = x_test.reshape(1, -1)
+
+                        k_inv_k_star = jsp.linalg.cho_solve((k_cholesky, True), k_star.T)
+                        pred_var = kernel_fn(x_test, x_test) - (k_star @ k_inv_k_star)
+                        return pred_var.squeeze()
+
+                    pred_var = jax.vmap(scalar_var_fn)(X_test, K_star)
+                    if include_noise:
+                        noise_var = likelihood_fn(X_test) ** 2
+                        pred_var = pred_var + noise_var
+                    return pred_mean, pred_var
             else:
                 return pred_mean
 
         return predict_fn
 
-    def predict(self, X, y, X_test, return_cov=True, include_noise=True):
+    def predict(self, X, y, X_test, return_cov=True, full_cov=False, include_noise=True):
         """
         This method is suitable for one time prediction.
         In case of batch prediction, it is better to use `condition` method in combination with `predict`.
         """
         predict_fn = self.condition(X, y)
-        return predict_fn(X_test, return_cov=return_cov, include_noise=include_noise)
+        return predict_fn(X_test, return_cov=return_cov, full_cov=full_cov, include_noise=include_noise)
 
     def tree_flatten(self):
         raw_params = self.get_raw_parameters()
@@ -470,7 +540,7 @@ class ExactGPRegression(GP):
         return obj
 
 
-class SparseGPRegression(Model):
+class SparseGPRegression(GP):
     def __init__(
         self,
         kernel: Kernel,
@@ -528,7 +598,7 @@ class SparseGPRegression(Model):
 
         log_prob = -(0.5 * (data_fit + complexity_penalty + trace_term + X.shape[0] * jnp.log(2 * jnp.pi))).squeeze()
 
-        return log_prob + log_prior_kernel + log_prior_likelihood
+        return (log_prob + log_prior_kernel + log_prior_likelihood) / X.size
 
     def nlpd(self, X, y):
         self.train()  # Set model to training mode
@@ -594,36 +664,61 @@ class SparseGPRegression(Model):
 
         chol_m = jnp.linalg.cholesky(k_mm)
 
-        def predict_fn(X_test, return_cov=True, include_noise=True):
+        def predict_fn(X_test, return_cov=True, full_cov=False, include_noise=True):
             k_nm = kernel_fn(X, X_inducing)
             chol_m_inv_mn = jsp.linalg.solve_triangular(chol_m, k_nm.T, lower=True)  # m x n
             chol_m_inv_mn_by_noise = chol_m_inv_mn / noise_n.reshape(1, -1)
             A = chol_m_inv_mn_by_noise @ chol_m_inv_mn.T + jnp.eye(X_inducing.shape[0])
             prod_y_bar = chol_m_inv_mn_by_noise @ y_bar
             chol_A = jnp.linalg.cholesky(A)
+
             post_mean = chol_m @ jsp.linalg.cho_solve((chol_A, True), prod_y_bar)
 
             k_new_m = kernel_fn(X_test, X_inducing)
             K_inv_y = jsp.linalg.cho_solve((chol_m, True), post_mean)
             pred_mean = k_new_m @ K_inv_y + mean
+
+            chol_A_ = jnp.linalg.cholesky(chol_m @ A @ chol_m.T)
+
             if return_cov:
-                k_new_new = kernel_fn(X_test, X_test)
-                k_inv_new = jsp.linalg.cho_solve((chol_m, True), k_new_m.T)
-                posterior_cov = k_new_new - k_new_m @ k_inv_new
+                if full_cov:
+                    k_new_new = kernel_fn(X_test, X_test)
+                    k_inv_new = jsp.linalg.cho_solve((chol_m, True), k_new_m.T)
+                    posterior_cov = k_new_new - k_new_m @ k_inv_new
 
-                chol_A_ = jnp.linalg.cholesky(chol_m @ A @ chol_m.T)
-                subspace_cov = k_new_m @ jsp.linalg.cho_solve((chol_A_, True), k_new_m.T)
+                    subspace_cov = k_new_m @ jsp.linalg.cho_solve((chol_A_, True), k_new_m.T)
 
-                pred_cov = posterior_cov + subspace_cov
-                if include_noise:
-                    pred_noise_scale = likelihood_fn(X_test)
-                    pred_cov = add_to_diagonal(pred_cov, pred_noise_scale**2, get_default_jitter())
-                return pred_mean, pred_cov
+                    pred_cov = posterior_cov + subspace_cov
+                    if include_noise:
+                        pred_noise_scale = likelihood_fn(X_test)
+                        pred_cov = add_to_diagonal(pred_cov, pred_noise_scale**2, get_default_jitter())
+                    return pred_mean, pred_cov
+                else:
+
+                    def scalar_var_fn(k_new_m_single, x_test):
+                        x_test = x_test.reshape(1, -1)
+                        k_new_m_single = k_new_m_single.reshape(1, -1)
+
+                        k_new_new = kernel_fn(x_test, x_test)
+                        k_inv_new = jsp.linalg.cho_solve((chol_m, True), k_new_m_single.T)
+                        posterior_var = k_new_new - k_new_m_single @ k_inv_new
+
+                        subspace_var = k_new_m_single @ jsp.linalg.cho_solve((chol_A_, True), k_new_m_single.T)
+
+                        pred_var = posterior_var + subspace_var
+                        return pred_var.squeeze()
+
+                    pred_var = jax.vmap(scalar_var_fn)(k_new_m, X_test)
+                    if include_noise:
+                        pred_noise_scale = likelihood_fn(X_test)
+                        pred_var = pred_var + pred_noise_scale**2
+                    return pred_mean, pred_var
+
             else:
                 return pred_mean
 
         return predict_fn
 
-    def predict(self, X, y, X_test, return_cov=True, include_noise=True):
+    def predict(self, X, y, X_test, return_cov=True, full_cov=False, include_noise=True):
         predict_fn = self.condition(X, y)
-        return predict_fn(X_test, return_cov=return_cov, include_noise=include_noise)
+        return predict_fn(X_test, return_cov=return_cov, full_cov=full_cov, include_noise=include_noise)

@@ -21,7 +21,7 @@ from tests.utils import assert_same_pytree, assert_approx_same_pytree
 
 import GPy
 from GPy.kern import RBF, Matern32, Matern52, Exponential, Poly
-from GPy.models import GPRegression
+from GPy.models import GPRegression, SparseGPRegression as GPySparseGPRegression
 
 X_inducing = jax.random.uniform(jax.random.PRNGKey(0), (5, 3))
 X = jax.random.uniform(jax.random.PRNGKey(1), (10, 3))
@@ -65,7 +65,17 @@ def gpy_loss(params):
     mean.update_gradients = lambda a, b: None
     gpy_gp = GPRegression(X, y.reshape(-1, 1), kernel, mean_function=mean)
     gpy_gp.likelihood.variance = params["likelihood"]["scale"] ** 2
-    return gpy_gp.objective_function()
+    return gpy_gp.objective_function() / X.size
+
+
+def gpy_loss_sparse(params):
+    kernel = RBF(X.shape[1], params["kernel"]["variance"], params["kernel"]["base_kernel"]["lengthscale"], ARD=True)
+    mean = GPy.core.Mapping(X.shape[1], 1)
+    mean.f = lambda x: params["mean"]["value"]
+    mean.update_gradients = lambda a, b: None
+    gpy_gp = GPySparseGPRegression(X, y.reshape(-1, 1), kernel, mean_function=mean, Z=params["X_inducing"])
+    gpy_gp.likelihood.variance = params["likelihood"]["scale"] ** 2
+    return gpy_gp.objective_function() / X.size
 
 
 def test_init():
@@ -113,33 +123,41 @@ def test_exact_gp(key, base_kernel_fn):
         gp.set_parameters(raw_params)
         return -gp.log_probability(X, y)
 
-    raw_params = gp.get_parameters()
+    raw_params = gp.get_raw_parameters()
     grads = jax.jit(jax.grad(neg_log_prob))(raw_params)
 
+    gp.set_raw_parameters(raw_params)
 
-# @pytest.mark.parametrize("seed", list(range(5)))
-# def test_sparse_gp_log_prob(seed):
-#     set_default_jitter(B.epsilon)
-#     key = jax.random.PRNGKey(seed)
-#     X = jax.random.normal(key, (10, 1))
-#     key = jax.random.split(key, 1)[0]
-#     y = jax.random.normal(key, (10,))
-#     key = jax.random.split(key, 1)[0]
-#     X_inducing = jax.random.normal(key, (5, 1))
-#     gp = SparseGPRegression(RBF(X), Gaussian(), Scalar(), X_inducing)
-#     gp.initialize(key)
-#     params = gp.get_parameters()
+    # predict
+    pred_mean, pred_var = gp.predict(X, y, X_new, full_cov=False)
+    assert pred_mean.shape == (X_new.shape[0],)
+    assert pred_var.shape == (X_new.shape[0],)
+    pred_mean, pred_var = gp.predict(X, y, X_new, full_cov=True)
+    assert pred_mean.shape == (X_new.shape[0],)
+    assert pred_var.shape == (X_new.shape[0], X_new.shape[0])
 
-#     gpy_gp = GP(
-#         params["mean"]["value"] * OneMean(),
-#         params["kernel"]["scale"] ** 2 * EQ().stretch(params["kernel"]["lengthscale"]),
-#     )
+    # condition and predict
+    predict_fn = gp.condition(X, y)
+    pred_mean, pred_var = predict_fn(X_new, full_cov=False)
+    assert pred_mean.shape == (X_new.shape[0],)
+    assert pred_var.shape == (X_new.shape[0],)
+    pred_mean, pred_var = predict_fn(X_new, full_cov=True)
+    assert pred_mean.shape == (X_new.shape[0],)
+    assert pred_var.shape == (X_new.shape[0], X_new.shape[0])
 
-#     gpy_loss = PseudoObs(gpy_gp(X_inducing), (gpy_gp(X, params["likelihood"]["scale"] ** 2), y)).elbo(gpy_gp.measure)
 
-#     log_prob = gp.log_probability(X, y)
+@pytest.mark.parametrize("seed", list(range(5)))
+def test_sparse_gp(seed):
+    key = jax.random.PRNGKey(seed)
+    gp = SparseGPRegression(gpk.Scale(X, gpk.RBF(X)), Gaussian(), Scalar(), X_inducing)
+    gp.initialize(key)
+    params = gp.get_parameters()
 
-#     assert jnp.allclose(log_prob, gpy_loss)
+    gpy_loss = gpy_loss_sparse(params)
+
+    log_prob = gp.log_probability(X, y)
+
+    assert jnp.allclose(log_prob, -gpy_loss, atol=1e-4)
 
 
 # @pytest.mark.parametrize("seed", list(range(5)))

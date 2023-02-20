@@ -9,7 +9,7 @@ import tensorflow_probability.substrates.jax as tfp
 tfb = tfp.bijectors
 tfd = tfp.distributions
 
-from gpax.core import Parameter, Module, get_positive_bijector
+from gpax.core import Parameter, Module, get_positive_bijector, get_default_jitter
 from gpax.models import LatentGPHeinonen, LatentGPDeltaInducing
 from gpax.utils import squared_distance, distance, repeat_to_size
 
@@ -81,6 +81,13 @@ class Kernel(MetaKernel):
         else:
             self.active_dims = active_dims
 
+        # Sanity check
+        # print(self.active_dims)
+        assert len(set(self.active_dims)) == len(self.active_dims), "active_dims must be unique."
+        assert isinstance(sum(self.active_dims), int), "active_dims must be a list of integers."
+        assert len(self.active_dims) <= self._num_dim, "active_dims can not be larger than the input dimensions."
+        assert max(self.active_dims) < self._num_dim, "active_dims must be a subset of the input dimensions."
+
     def slice_inputs(self, *args):
         return jtu.tree_map(lambda x: x[:, self.active_dims], args)
 
@@ -124,9 +131,9 @@ class Smooth(Kernel):
         if self.ARD:
             assert lengthscale.size in (
                 1,
-                X.shape[1],
+                len(self.active_dims),
             ), "lengthscale must be a scalar or an array of shape (input_dim,)."
-            lengthscale = repeat_to_size(lengthscale, X.shape[1])
+            lengthscale = repeat_to_size(lengthscale, len(self.active_dims))
         else:
             assert lengthscale.shape == (), "lengthscale must be a scalar when ARD=False."
 
@@ -199,6 +206,20 @@ class Matern52(Smooth):
         return "Matern52"
 
 
+class Hamming(Smooth):
+    """
+    This is a 1D kernel. Do not use it for multidimensional inputs.
+    """
+
+    def pair_wise(self, x1, x2):
+        hamming_distance = (x1 != x2) / self.lengthscale()
+        exp_part = jnp.exp(-hamming_distance)
+        return exp_part.squeeze()
+
+    def __repr__(self) -> str:
+        return "Hamming"
+
+
 class RationalQuadratic(Smooth):
     def __init__(
         self,
@@ -231,12 +252,15 @@ class Periodic(Smooth):
         ARD: bool = True,
     ):
         super(Periodic, self).__init__(X, lengthscale, active_dims, ARD)
-        assert X.shape[1] == 1, "Periodic kernel only supports 1D inputs."
+        assert len(self.active_dims) == 1, "Periodic kernel only supports 1D inputs."
         self.period = Parameter(period, get_positive_bijector())
 
     def pair_wise(self, x1, x2):
-        arg = jnp.sin(jnp.pi * distance(x1, x2) / self.period())
-        return jnp.exp(-0.5 * jnp.square(arg / self.lengthscale())).squeeze()
+        # arg = jnp.sin(jnp.pi * distance(x1, x2) / self.period())
+        # return jnp.exp(-0.5 * jnp.square(arg / self.lengthscale())).squeeze()
+
+        sine_squared = (jnp.sin(jnp.pi * (x1 - x2) / self.period()) / self.lengthscale()) ** 2
+        return jnp.exp(-0.5 * jnp.sum(sine_squared, axis=0))
 
     def __repr__(self) -> str:
         return "Periodic"

@@ -59,10 +59,12 @@ class Parameter:
         bijector: tfb.Bijector = None,
         prior: tfd.Distribution = None,
         trainable: bool = True,  # if False, the value is not updated during training
+        fixed_init: bool = False,  # if True, the value is not updated during initialization
     ):
         value = jnp.asarray(value)
         self.prior = prior
         self._trainable = trainable
+        self._fixed_init = fixed_init
 
         # bijector
         if bijector is None:
@@ -109,7 +111,7 @@ class Parameter:
         self.set_raw_value(raw_value)
 
     def initialize(self, key):
-        if self._trainable is False:
+        if self._trainable is False or self._fixed_init is True:
             return
         elif self.prior is None:
             default_prior = get_default_prior()

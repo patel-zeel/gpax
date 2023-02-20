@@ -31,9 +31,9 @@ class Gaussian(Likelihood):
 
     def likelihood_fn(self, X):
         if self._training:
-            return self.scale.get_value(), 0.0
+            return self.scale.get_value().repeat(X.shape[0]), 0.0
         else:
-            return self.scale.get_value()
+            return self.scale.get_value().repeat(X.shape[0])
 
     def __repr__(self) -> str:
         return f"Gaussian"
