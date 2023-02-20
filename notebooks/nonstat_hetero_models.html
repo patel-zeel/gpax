@@ -416,6 +416,18 @@ title="Print to PDF"
   </a>
  </li>
  <li class="toc-h2 nav-item toc-entry">
+  <a class="reference internal nav-link" href="#exact-gp-models">
+   Exact GP Models
+  </a>
+  <ul class="nav section-nav flex-column">
+   <li class="toc-h3 nav-item toc-entry">
+    <a class="reference internal nav-link" href="#gaussian-basis-function-model">
+     Gaussian Basis Function model
+    </a>
+   </li>
+  </ul>
+ </li>
+ <li class="toc-h2 nav-item toc-entry">
   <a class="reference internal nav-link" href="#heteroscedastic-likelihood-model">
    Heteroscedastic likelihood model
   </a>
@@ -458,6 +470,23 @@ title="Print to PDF"
    </li>
   </ul>
  </li>
+ <li class="toc-h2 nav-item toc-entry">
+  <a class="reference internal nav-link" href="#sparse-gp-methods">
+   Sparse GP methods
+  </a>
+  <ul class="nav section-nav flex-column">
+   <li class="toc-h3 nav-item toc-entry">
+    <a class="reference internal nav-link" href="#gaussian-basis">
+     Gaussian Basis
+    </a>
+   </li>
+   <li class="toc-h3 nav-item toc-entry">
+    <a class="reference internal nav-link" href="#deltainducing">
+     DeltaInducing
+    </a>
+   </li>
+  </ul>
+ </li>
 </ul>
 
     </nav>
@@ -481,6 +510,18 @@ title="Print to PDF"
   <a class="reference internal nav-link" href="#load-and-preprocess-dataset">
    Load and preprocess dataset
   </a>
+ </li>
+ <li class="toc-h2 nav-item toc-entry">
+  <a class="reference internal nav-link" href="#exact-gp-models">
+   Exact GP Models
+  </a>
+  <ul class="nav section-nav flex-column">
+   <li class="toc-h3 nav-item toc-entry">
+    <a class="reference internal nav-link" href="#gaussian-basis-function-model">
+     Gaussian Basis Function model
+    </a>
+   </li>
+  </ul>
  </li>
  <li class="toc-h2 nav-item toc-entry">
   <a class="reference internal nav-link" href="#heteroscedastic-likelihood-model">
@@ -522,6 +563,23 @@ title="Print to PDF"
       </a>
      </li>
     </ul>
+   </li>
+  </ul>
+ </li>
+ <li class="toc-h2 nav-item toc-entry">
+  <a class="reference internal nav-link" href="#sparse-gp-methods">
+   Sparse GP methods
+  </a>
+  <ul class="nav section-nav flex-column">
+   <li class="toc-h3 nav-item toc-entry">
+    <a class="reference internal nav-link" href="#gaussian-basis">
+     Gaussian Basis
+    </a>
+   </li>
+   <li class="toc-h3 nav-item toc-entry">
+    <a class="reference internal nav-link" href="#deltainducing">
+     DeltaInducing
+    </a>
    </li>
   </ul>
  </li>
@@ -564,21 +622,13 @@ title="Print to PDF"
 <span class="kn">import</span> <span class="nn">gpax.kernels</span> <span class="k">as</span> <span class="nn">gpk</span>
 <span class="kn">import</span> <span class="nn">gpax.likelihoods</span> <span class="k">as</span> <span class="nn">gpl</span>
 <span class="kn">import</span> <span class="nn">gpax.means</span> <span class="k">as</span> <span class="nn">gpm</span>
-<span class="kn">from</span> <span class="nn">gpax.models</span> <span class="kn">import</span> <span class="n">ExactGPRegression</span><span class="p">,</span> <span class="n">LatentGPHeinonen</span><span class="p">,</span> <span class="n">LatentGPDeltaInducing</span><span class="p">,</span> <span class="n">LatentGPPlagemann</span><span class="p">,</span> <span class="n">LatentGP</span>
+<span class="kn">from</span> <span class="nn">gpax.models</span> <span class="kn">import</span> <span class="n">ExactGPRegression</span><span class="p">,</span> <span class="n">LatentGPHeinonen</span><span class="p">,</span> <span class="n">LatentGPDeltaInducing</span><span class="p">,</span> <span class="n">LatentGPPlagemann</span><span class="p">,</span> <span class="n">LatentGPGaussianBasis</span><span class="p">,</span> <span class="n">SparseGPRegression</span>
 <span class="kn">from</span> <span class="nn">gpax.utils</span> <span class="kn">import</span> <span class="n">index_pytree</span><span class="p">,</span> <span class="n">DataScaler</span>
 <span class="kn">from</span> <span class="nn">gpax.core</span> <span class="kn">import</span> <span class="n">set_positive_bijector</span>
 
 <span class="n">jax</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="s2">&quot;jax_enable_x64&quot;</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
 
 <span class="c1"># set_positive_bijector(tfb.Exp())</span>
-</pre></div>
-</div>
-</div>
-<div class="cell_output docutils container">
-<div class="output stderr highlight-myst-ansi notranslate"><div class="highlight"><pre><span></span>/home/patel_zeel/miniconda3/envs/jax_gpu/lib/python3.9/site-packages/pkg_resources/__init__.py:122: PkgResourcesDeprecationWarning: LOCAL is an invalid version and will not be supported in a future release
-  warnings.warn(
-/home/patel_zeel/miniconda3/envs/jax_gpu/lib/python3.9/site-packages/pkg_resources/__init__.py:122: PkgResourcesDeprecationWarning: pre-0.1 is an invalid version and will not be supported in a future release
-  warnings.warn(
 </pre></div>
 </div>
 </div>
@@ -599,16 +649,57 @@ title="Print to PDF"
 </div>
 </div>
 <div class="cell_output docutils container">
-<div class="output stderr highlight-myst-ansi notranslate"><div class="highlight"><pre><span></span>2023-02-06 20:06:20.358766: E external/org_tensorflow/tensorflow/compiler/xla/stream_executor/cuda/cuda_driver.cc:267] failed call to cuInit: CUDA_ERROR_NO_DEVICE: no CUDA-capable device is detected
-WARNING:jax._src.lib.xla_bridge:No GPU/TPU found, falling back to CPU. (Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)
-</pre></div>
-</div>
 <div class="output text_plain highlight-myst-ansi notranslate"><div class="highlight"><pre><span></span>(dtype(&#39;float64&#39;), dtype(&#39;float64&#39;), dtype(&#39;float64&#39;))
 </pre></div>
 </div>
-<img alt="../_images/nonstat_hetero_models_3_2.png" src="../_images/nonstat_hetero_models_3_2.png" />
+<img alt="../_images/nonstat_hetero_models_3_1.png" src="../_images/nonstat_hetero_models_3_1.png" />
 </div>
 </div>
+</section>
+<section id="exact-gp-models">
+<h2>Exact GP Models<a class="headerlink" href="#exact-gp-models" title="Permalink to this headline">#</a></h2>
+<section id="gaussian-basis-function-model">
+<h3>Gaussian Basis Function model<a class="headerlink" href="#gaussian-basis-function-model" title="Permalink to this headline">#</a></h3>
+<p>Andersson, T, Bruinsma, W, Markou, S, Jones, D, Hosking, J, Requeima, J, Coca-Castro, A, Vaughan, A, Ellis, AL, Lazzara, M, others. “Active Learning with Convolutional Gaussian Neural Processes for Environmental Sensor Placement”. arXiv preprint arXiv:2211.10381 2022.</p>
+<div class="cell docutils container">
+<div class="cell_input docutils container">
+<div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">kernel</span> <span class="o">=</span> <span class="n">gpk</span><span class="o">.</span><span class="n">Scale</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">gpk</span><span class="o">.</span><span class="n">RBF</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">lengthscale</span><span class="o">=</span><span class="mf">0.05</span><span class="p">),</span> <span class="n">variance</span><span class="o">=</span><span class="mf">0.3</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span>
+<span class="n">latent_model</span> <span class="o">=</span> <span class="n">LatentGPGaussianBasis</span><span class="p">(</span><span class="n">X_inducing</span><span class="o">=</span><span class="n">X</span><span class="p">,</span> <span class="n">grid_size</span><span class="o">=</span><span class="mi">20</span><span class="p">)</span>
+<span class="n">likelihood</span> <span class="o">=</span> <span class="n">gpl</span><span class="o">.</span><span class="n">Heteroscedastic</span><span class="p">(</span><span class="n">latent_model</span><span class="o">=</span><span class="n">latent_model</span><span class="p">)</span>
+
+<span class="n">model</span> <span class="o">=</span> <span class="n">ExactGPRegression</span><span class="p">(</span><span class="n">kernel</span><span class="p">,</span> <span class="n">likelihood</span><span class="p">,</span> <span class="n">gpm</span><span class="o">.</span><span class="n">Average</span><span class="p">(),</span> <span class="n">X_inducing</span><span class="o">=</span><span class="n">X</span><span class="p">)</span>
+
+<span class="c1"># This function is triggered after the default initialization</span>
+<span class="k">def</span> <span class="nf">customize_fn</span><span class="p">(</span><span class="n">model</span><span class="p">):</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">kernel</span><span class="o">.</span><span class="n">variance</span><span class="o">.</span><span class="n">set_value</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="mf">0.3</span><span class="p">)</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">kernel</span><span class="o">.</span><span class="n">base_kernel</span><span class="o">.</span><span class="n">lengthscale</span><span class="o">.</span><span class="n">set_value</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">0.05</span><span class="p">]))</span>
+
+<span class="n">key</span> <span class="o">=</span> <span class="n">jr</span><span class="o">.</span><span class="n">PRNGKey</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">customize_fn</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">epochs</span><span class="o">=</span><span class="mi">500</span><span class="p">)</span>
+
+<span class="n">plt</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s2">&quot;loss_history&quot;</span><span class="p">]);</span>
+</pre></div>
+</div>
+</div>
+<div class="cell_output docutils container">
+<img alt="../_images/nonstat_hetero_models_6_0.png" src="../_images/nonstat_hetero_models_6_0.png" />
+</div>
+</div>
+<div class="cell docutils container">
+<div class="cell_input docutils container">
+<div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">fig</span><span class="p">,</span> <span class="n">ax</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">10</span><span class="p">));</span>
+<span class="n">model</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">X_test</span><span class="p">,</span> <span class="n">ax</span><span class="o">=</span><span class="n">ax</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">s</span><span class="o">=</span><span class="mi">10</span><span class="p">);</span>
+
+<span class="n">ax</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">X_test</span><span class="p">,</span> <span class="n">model</span><span class="o">.</span><span class="n">likelihood</span><span class="o">.</span><span class="n">get_likelihood_fn</span><span class="p">(</span><span class="n">X</span><span class="p">)(</span><span class="n">X_test</span><span class="p">),</span> <span class="n">label</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;$\sqrt{noise variance}$&quot;</span><span class="p">);</span>
+<span class="n">ax</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">legend</span><span class="p">();</span>
+</pre></div>
+</div>
+</div>
+<div class="cell_output docutils container">
+<img alt="../_images/nonstat_hetero_models_7_0.png" src="../_images/nonstat_hetero_models_7_0.png" />
+</div>
+</div>
+</section>
 </section>
 <section id="heteroscedastic-likelihood-model">
 <h2>Heteroscedastic likelihood model<a class="headerlink" href="#heteroscedastic-likelihood-model" title="Permalink to this headline">#</a></h2>
@@ -640,7 +731,7 @@ WARNING:jax._src.lib.xla_bridge:No GPU/TPU found, falling back to CPU. (Set TF_C
 </div>
 </div>
 <div class="cell_output docutils container">
-<img alt="../_images/nonstat_hetero_models_6_0.png" src="../_images/nonstat_hetero_models_6_0.png" />
+<img alt="../_images/nonstat_hetero_models_10_0.png" src="../_images/nonstat_hetero_models_10_0.png" />
 </div>
 </div>
 <div class="cell docutils container">
@@ -654,7 +745,7 @@ WARNING:jax._src.lib.xla_bridge:No GPU/TPU found, falling back to CPU. (Set TF_C
 </div>
 </div>
 <div class="cell_output docutils container">
-<img alt="../_images/nonstat_hetero_models_7_0.png" src="../_images/nonstat_hetero_models_7_0.png" />
+<img alt="../_images/nonstat_hetero_models_11_0.png" src="../_images/nonstat_hetero_models_11_0.png" />
 </div>
 </div>
 <section id="second-order-optimization">
@@ -691,7 +782,7 @@ WARNING:jax._src.lib.xla_bridge:No GPU/TPU found, falling back to CPU. (Set TF_C
 </div>
 </div>
 <div class="cell_output docutils container">
-<img alt="../_images/nonstat_hetero_models_10_0.png" src="../_images/nonstat_hetero_models_10_0.png" />
+<img alt="../_images/nonstat_hetero_models_14_0.png" src="../_images/nonstat_hetero_models_14_0.png" />
 </div>
 </div>
 </section>
@@ -724,13 +815,14 @@ WARNING:jax._src.lib.xla_bridge:No GPU/TPU found, falling back to CPU. (Set TF_C
 </div>
 </div>
 <div class="cell_output docutils container">
-<img alt="../_images/nonstat_hetero_models_12_0.png" src="../_images/nonstat_hetero_models_12_0.png" />
+<img alt="../_images/nonstat_hetero_models_16_0.png" src="../_images/nonstat_hetero_models_16_0.png" />
 </div>
 </div>
 <div class="cell docutils container">
 <div class="cell_input docutils container">
 <div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">fig</span><span class="p">,</span> <span class="n">ax</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">10</span><span class="p">));</span>
 <span class="n">model</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">X_test</span><span class="p">,</span> <span class="n">ax</span><span class="o">=</span><span class="n">ax</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">s</span><span class="o">=</span><span class="mi">10</span><span class="p">);</span>
+<span class="n">X_inducing</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">X_inducing</span><span class="p">()</span>
 <span class="n">ax</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">scatter</span><span class="p">(</span><span class="n">X_inducing</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">ax</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">get_ylim</span><span class="p">()[</span><span class="mi">0</span><span class="p">])</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">X_inducing</span><span class="p">)),</span> <span class="n">s</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">c</span><span class="o">=</span><span class="s2">&quot;r&quot;</span><span class="p">,</span> <span class="n">marker</span><span class="o">=</span><span class="s2">&quot;^&quot;</span><span class="p">);</span>
 
 <span class="n">ax</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">X_test</span><span class="p">,</span> <span class="n">model</span><span class="o">.</span><span class="n">likelihood</span><span class="o">.</span><span class="n">get_likelihood_fn</span><span class="p">(</span><span class="n">X_inducing</span><span class="p">)(</span><span class="n">X_test</span><span class="p">),</span> <span class="n">label</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;$\sqrt{noise variance}$&quot;</span><span class="p">);</span>
@@ -739,7 +831,7 @@ WARNING:jax._src.lib.xla_bridge:No GPU/TPU found, falling back to CPU. (Set TF_C
 </div>
 </div>
 <div class="cell_output docutils container">
-<img alt="../_images/nonstat_hetero_models_13_0.png" src="../_images/nonstat_hetero_models_13_0.png" />
+<img alt="../_images/nonstat_hetero_models_17_0.png" src="../_images/nonstat_hetero_models_17_0.png" />
 </div>
 </div>
 <section id="id1">
@@ -769,6 +861,7 @@ WARNING:jax._src.lib.xla_bridge:No GPU/TPU found, falling back to CPU. (Set TF_C
 <div class="cell_input docutils container">
 <div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">fig</span><span class="p">,</span> <span class="n">ax</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">10</span><span class="p">));</span>
 <span class="n">model</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">X_test</span><span class="p">,</span> <span class="n">ax</span><span class="o">=</span><span class="n">ax</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">s</span><span class="o">=</span><span class="mi">10</span><span class="p">);</span>
+<span class="n">X_inducing</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">X_inducing</span><span class="p">()</span>
 <span class="n">ax</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">scatter</span><span class="p">(</span><span class="n">X_inducing</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">ax</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">get_ylim</span><span class="p">()[</span><span class="mi">0</span><span class="p">])</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">X_inducing</span><span class="p">)),</span> <span class="n">s</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">c</span><span class="o">=</span><span class="s2">&quot;r&quot;</span><span class="p">,</span> <span class="n">marker</span><span class="o">=</span><span class="s2">&quot;^&quot;</span><span class="p">);</span>
 
 <span class="n">ax</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">X_test</span><span class="p">,</span> <span class="n">model</span><span class="o">.</span><span class="n">likelihood</span><span class="o">.</span><span class="n">get_likelihood_fn</span><span class="p">(</span><span class="n">X_inducing</span><span class="p">)(</span><span class="n">X_test</span><span class="p">),</span> <span class="n">label</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;$\sqrt{noise variance}$&quot;</span><span class="p">);</span>
@@ -777,7 +870,7 @@ WARNING:jax._src.lib.xla_bridge:No GPU/TPU found, falling back to CPU. (Set TF_C
 </div>
 </div>
 <div class="cell_output docutils container">
-<img alt="../_images/nonstat_hetero_models_16_0.png" src="../_images/nonstat_hetero_models_16_0.png" />
+<img alt="../_images/nonstat_hetero_models_20_0.png" src="../_images/nonstat_hetero_models_20_0.png" />
 </div>
 </div>
 </section>
@@ -810,13 +903,14 @@ WARNING:jax._src.lib.xla_bridge:No GPU/TPU found, falling back to CPU. (Set TF_C
 </div>
 </div>
 <div class="cell_output docutils container">
-<img alt="../_images/nonstat_hetero_models_18_0.png" src="../_images/nonstat_hetero_models_18_0.png" />
+<img alt="../_images/nonstat_hetero_models_22_0.png" src="../_images/nonstat_hetero_models_22_0.png" />
 </div>
 </div>
 <div class="cell docutils container">
 <div class="cell_input docutils container">
 <div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">fig</span><span class="p">,</span> <span class="n">ax</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">10</span><span class="p">));</span>
 <span class="n">model</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">X_test</span><span class="p">,</span> <span class="n">ax</span><span class="o">=</span><span class="n">ax</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">s</span><span class="o">=</span><span class="mi">10</span><span class="p">);</span>
+<span class="n">X_inducing</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">X_inducing</span><span class="p">()</span>
 <span class="n">ax</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">scatter</span><span class="p">(</span><span class="n">X_inducing</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">ax</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">get_ylim</span><span class="p">()[</span><span class="mi">0</span><span class="p">])</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">X_inducing</span><span class="p">)),</span> <span class="n">s</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">c</span><span class="o">=</span><span class="s2">&quot;r&quot;</span><span class="p">,</span> <span class="n">marker</span><span class="o">=</span><span class="s2">&quot;^&quot;</span><span class="p">);</span>
 
 <span class="n">ax</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">X_test</span><span class="p">,</span> <span class="n">model</span><span class="o">.</span><span class="n">likelihood</span><span class="o">.</span><span class="n">get_likelihood_fn</span><span class="p">(</span><span class="n">X_inducing</span><span class="p">)(</span><span class="n">X_test</span><span class="p">),</span> <span class="n">label</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;$\sqrt{noise variance}$&quot;</span><span class="p">);</span>
@@ -825,7 +919,7 @@ WARNING:jax._src.lib.xla_bridge:No GPU/TPU found, falling back to CPU. (Set TF_C
 </div>
 </div>
 <div class="cell_output docutils container">
-<img alt="../_images/nonstat_hetero_models_19_0.png" src="../_images/nonstat_hetero_models_19_0.png" />
+<img alt="../_images/nonstat_hetero_models_23_0.png" src="../_images/nonstat_hetero_models_23_0.png" />
 </div>
 </div>
 <section id="id2">
@@ -855,6 +949,8 @@ WARNING:jax._src.lib.xla_bridge:No GPU/TPU found, falling back to CPU. (Set TF_C
 <div class="cell_input docutils container">
 <div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">fig</span><span class="p">,</span> <span class="n">ax</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">10</span><span class="p">));</span>
 <span class="n">model</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">X_test</span><span class="p">,</span> <span class="n">ax</span><span class="o">=</span><span class="n">ax</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">s</span><span class="o">=</span><span class="mi">10</span><span class="p">);</span>
+<span class="n">X_inducing</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">X_inducing</span><span class="p">()</span>
+<span class="n">ax</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">scatter</span><span class="p">(</span><span class="n">X_inducing</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">ax</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">get_ylim</span><span class="p">()[</span><span class="mi">0</span><span class="p">])</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">X_inducing</span><span class="p">)),</span> <span class="n">s</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">c</span><span class="o">=</span><span class="s2">&quot;r&quot;</span><span class="p">,</span> <span class="n">marker</span><span class="o">=</span><span class="s2">&quot;^&quot;</span><span class="p">);</span>
 
 <span class="n">ax</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">X_test</span><span class="p">,</span> <span class="n">model</span><span class="o">.</span><span class="n">likelihood</span><span class="o">.</span><span class="n">get_likelihood_fn</span><span class="p">(</span><span class="n">X_inducing</span><span class="p">)(</span><span class="n">X_test</span><span class="p">),</span> <span class="n">label</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;$\sqrt{noise variance}$&quot;</span><span class="p">);</span>
 <span class="n">ax</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">legend</span><span class="p">();</span>
@@ -862,10 +958,107 @@ WARNING:jax._src.lib.xla_bridge:No GPU/TPU found, falling back to CPU. (Set TF_C
 </div>
 </div>
 <div class="cell_output docutils container">
-<img alt="../_images/nonstat_hetero_models_22_0.png" src="../_images/nonstat_hetero_models_22_0.png" />
+<img alt="../_images/nonstat_hetero_models_26_0.png" src="../_images/nonstat_hetero_models_26_0.png" />
 </div>
 </div>
 </section>
+</section>
+</section>
+<section id="sparse-gp-methods">
+<h2>Sparse GP methods<a class="headerlink" href="#sparse-gp-methods" title="Permalink to this headline">#</a></h2>
+<section id="gaussian-basis">
+<h3>Gaussian Basis<a class="headerlink" href="#gaussian-basis" title="Permalink to this headline">#</a></h3>
+<div class="cell docutils container">
+<div class="cell_input docutils container">
+<div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">kernel</span> <span class="o">=</span> <span class="n">gpk</span><span class="o">.</span><span class="n">Scale</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">gpk</span><span class="o">.</span><span class="n">RBF</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">lengthscale</span><span class="o">=</span><span class="mf">0.05</span><span class="p">),</span> <span class="n">variance</span><span class="o">=</span><span class="mf">0.3</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span>
+<span class="n">latent_model</span> <span class="o">=</span> <span class="n">LatentGPGaussianBasis</span><span class="p">(</span><span class="n">X_inducing</span><span class="o">=</span><span class="n">X</span><span class="p">,</span> <span class="n">grid_size</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span>
+<span class="n">likelihood</span> <span class="o">=</span> <span class="n">gpl</span><span class="o">.</span><span class="n">Heteroscedastic</span><span class="p">(</span><span class="n">latent_model</span><span class="o">=</span><span class="n">latent_model</span><span class="p">)</span>
+
+<span class="n">X_inducing</span> <span class="o">=</span> <span class="n">X</span><span class="p">[::</span><span class="mi">5</span><span class="p">]</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">X_inducing</span><span class="o">.</span><span class="n">shape</span><span class="si">=}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">SparseGPRegression</span><span class="p">(</span><span class="n">kernel</span><span class="p">,</span> <span class="n">likelihood</span><span class="p">,</span> <span class="n">gpm</span><span class="o">.</span><span class="n">Average</span><span class="p">(),</span> <span class="n">X_inducing</span><span class="o">=</span><span class="n">X_inducing</span><span class="p">)</span>
+<span class="c1"># model.X_inducing.trainable(False)</span>
+
+<span class="c1"># This function is triggered after the default initialization</span>
+<span class="k">def</span> <span class="nf">customize_fn</span><span class="p">(</span><span class="n">model</span><span class="p">):</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">kernel</span><span class="o">.</span><span class="n">variance</span><span class="o">.</span><span class="n">set_value</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="mf">0.3</span><span class="p">)</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">kernel</span><span class="o">.</span><span class="n">base_kernel</span><span class="o">.</span><span class="n">lengthscale</span><span class="o">.</span><span class="n">set_value</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">0.05</span><span class="p">]))</span>
+
+<span class="n">key</span> <span class="o">=</span> <span class="n">jr</span><span class="o">.</span><span class="n">PRNGKey</span><span class="p">(</span><span class="mi">6</span><span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">customize_fn</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="mf">0.01</span><span class="p">,</span> <span class="n">epochs</span><span class="o">=</span><span class="mi">2000</span><span class="p">)</span>
+
+<span class="n">plt</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s2">&quot;loss_history&quot;</span><span class="p">]);</span>
+</pre></div>
+</div>
+</div>
+<div class="cell_output docutils container">
+<div class="output stream highlight-myst-ansi notranslate"><div class="highlight"><pre><span></span>X_inducing.shape=(19, 1)
+</pre></div>
+</div>
+<img alt="../_images/nonstat_hetero_models_29_1.png" src="../_images/nonstat_hetero_models_29_1.png" />
+</div>
+</div>
+<div class="cell docutils container">
+<div class="cell_input docutils container">
+<div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">fig</span><span class="p">,</span> <span class="n">ax</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">10</span><span class="p">));</span>
+<span class="n">model</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">X_test</span><span class="p">,</span> <span class="n">ax</span><span class="o">=</span><span class="n">ax</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">s</span><span class="o">=</span><span class="mi">10</span><span class="p">);</span>
+<span class="n">X_inducing</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">X_inducing</span><span class="p">()</span>
+<span class="n">ax</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">scatter</span><span class="p">(</span><span class="n">X_inducing</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">ax</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">get_ylim</span><span class="p">()[</span><span class="mi">0</span><span class="p">])</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">X_inducing</span><span class="p">)),</span> <span class="n">s</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">c</span><span class="o">=</span><span class="s2">&quot;r&quot;</span><span class="p">,</span> <span class="n">marker</span><span class="o">=</span><span class="s2">&quot;^&quot;</span><span class="p">);</span>
+
+<span class="n">ax</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">X_test</span><span class="p">,</span> <span class="n">model</span><span class="o">.</span><span class="n">likelihood</span><span class="o">.</span><span class="n">get_likelihood_fn</span><span class="p">(</span><span class="n">X_inducing</span><span class="p">)(</span><span class="n">X_test</span><span class="p">),</span> <span class="n">label</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;$\sqrt{noise variance}$&quot;</span><span class="p">);</span>
+<span class="n">ax</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">legend</span><span class="p">();</span>
+</pre></div>
+</div>
+</div>
+<div class="cell_output docutils container">
+<img alt="../_images/nonstat_hetero_models_30_0.png" src="../_images/nonstat_hetero_models_30_0.png" />
+</div>
+</div>
+</section>
+<section id="deltainducing">
+<h3>DeltaInducing<a class="headerlink" href="#deltainducing" title="Permalink to this headline">#</a></h3>
+<div class="cell docutils container">
+<div class="cell_input docutils container">
+<div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">kernel</span> <span class="o">=</span> <span class="n">gpk</span><span class="o">.</span><span class="n">Scale</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">gpk</span><span class="o">.</span><span class="n">RBF</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">lengthscale</span><span class="o">=</span><span class="mf">0.05</span><span class="p">),</span> <span class="n">variance</span><span class="o">=</span><span class="mf">0.3</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span>
+<span class="n">latent_model_kernel</span> <span class="o">=</span> <span class="n">gpk</span><span class="o">.</span><span class="n">Scale</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">gpk</span><span class="o">.</span><span class="n">RBF</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">lengthscale</span><span class="o">=</span><span class="mf">0.3</span><span class="p">),</span> <span class="n">variance</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span><span class="o">.</span><span class="n">trainable</span><span class="p">(</span><span class="kc">False</span><span class="p">)</span>  <span class="c1"># Fixed latent model kernel</span>
+<span class="n">X_inducing</span> <span class="o">=</span> <span class="n">X</span><span class="p">[::</span><span class="mi">10</span><span class="p">]</span>
+
+<span class="n">latent_model</span> <span class="o">=</span> <span class="n">LatentGPDeltaInducing</span><span class="p">(</span><span class="n">X_inducing</span><span class="p">,</span> <span class="n">kernel</span><span class="o">=</span><span class="n">latent_model_kernel</span><span class="p">)</span>
+<span class="n">likelihood</span> <span class="o">=</span> <span class="n">gpl</span><span class="o">.</span><span class="n">Heteroscedastic</span><span class="p">(</span><span class="n">latent_model</span><span class="o">=</span><span class="n">latent_model</span><span class="p">)</span>
+
+<span class="n">model</span> <span class="o">=</span> <span class="n">SparseGPRegression</span><span class="p">(</span><span class="n">kernel</span><span class="p">,</span> <span class="n">likelihood</span><span class="p">,</span> <span class="n">gpm</span><span class="o">.</span><span class="n">Average</span><span class="p">(),</span> <span class="n">X_inducing</span><span class="o">=</span><span class="n">X_inducing</span><span class="p">)</span>
+
+<span class="c1"># This function is triggered after the default initialization</span>
+<span class="k">def</span> <span class="nf">customize_fn</span><span class="p">(</span><span class="n">model</span><span class="p">):</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">kernel</span><span class="o">.</span><span class="n">variance</span><span class="o">.</span><span class="n">set_value</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="mf">0.3</span><span class="p">)</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">kernel</span><span class="o">.</span><span class="n">base_kernel</span><span class="o">.</span><span class="n">lengthscale</span><span class="o">.</span><span class="n">set_value</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">0.05</span><span class="p">]))</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">likelihood</span><span class="o">.</span><span class="n">latent_model</span><span class="o">.</span><span class="n">reverse_init</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="mf">0.05</span><span class="p">))</span>
+
+<span class="n">key</span> <span class="o">=</span> <span class="n">jr</span><span class="o">.</span><span class="n">PRNGKey</span><span class="p">(</span><span class="mi">100</span><span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">customize_fn</span><span class="p">,</span> <span class="n">lr</span><span class="o">=</span><span class="mf">0.01</span><span class="p">,</span> <span class="n">epochs</span><span class="o">=</span><span class="mi">500</span><span class="p">)</span>
+
+<span class="n">plt</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s2">&quot;loss_history&quot;</span><span class="p">]);</span>
+</pre></div>
+</div>
+</div>
+<div class="cell_output docutils container">
+<img alt="../_images/nonstat_hetero_models_32_0.png" src="../_images/nonstat_hetero_models_32_0.png" />
+</div>
+</div>
+<div class="cell docutils container">
+<div class="cell_input docutils container">
+<div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">fig</span><span class="p">,</span> <span class="n">ax</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">10</span><span class="p">));</span>
+<span class="n">model</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">X_test</span><span class="p">,</span> <span class="n">ax</span><span class="o">=</span><span class="n">ax</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">s</span><span class="o">=</span><span class="mi">10</span><span class="p">);</span>
+
+<span class="n">ax</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">X_test</span><span class="p">,</span> <span class="n">model</span><span class="o">.</span><span class="n">likelihood</span><span class="o">.</span><span class="n">get_likelihood_fn</span><span class="p">(</span><span class="n">X_inducing</span><span class="p">)(</span><span class="n">X_test</span><span class="p">),</span> <span class="n">label</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;$\sqrt{noise variance}$&quot;</span><span class="p">);</span>
+<span class="n">ax</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">legend</span><span class="p">();</span>
+</pre></div>
+</div>
+</div>
+<div class="cell_output docutils container">
+<img alt="../_images/nonstat_hetero_models_33_0.png" src="../_images/nonstat_hetero_models_33_0.png" />
+</div>
+</div>
 </section>
 </section>
 </section>
@@ -882,7 +1075,7 @@ WARNING:jax._src.lib.xla_bridge:No GPU/TPU found, falling back to CPU. (Set TF_C
             mode: "python"
         },
         kernelOptions: {
-            kernelName: "python3",
+            name: "python3",
             path: "./notebooks"
         },
         predefinedOutput: true
