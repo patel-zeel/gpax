@@ -4,6 +4,7 @@ import jax.tree_util as jtu
 import jax.numpy as jnp
 import jax.scipy as jsp
 from jax.flatten_util import ravel_pytree
+from jax_tqdm import scan_tqdm
 
 import tensorflow_probability.substrates.jax as tfp
 
@@ -43,10 +44,12 @@ class LatentGP(LatentModel):
         X_inducing: Array,
         kernel: Kernel,
         vmap: bool = False,
+        sparse=False,
     ):
         super(LatentGP, self).__init__()
         self.vmap = vmap
         self.X_inducing = X_inducing
+        self.sparse = sparse
 
         self.kernel = kernel
 
@@ -89,18 +92,25 @@ class LatentGPGaussianBasis(LatentGP):
     This method does not have inducing points. Pass full data X to X_inducing argument.
     """
 
-    def __init__(self, X_inducing, grid_size=None, vmap=False):
+    def __init__(self, X_inducing, grid_size=None, vmap=False, sparse=None, active_dims=None):
         super(LatentGPGaussianBasis, self).__init__(X_inducing, kernel=None, vmap=vmap)
+        assert active_dims is not None, "active_dims must be specified."
+        self.active_dims = active_dims
         grid_size = 10 if grid_size is None else grid_size
         upper = X_inducing.max(axis=0)
         lower = X_inducing.min(axis=0)
-        self.X_grid = jax.vmap(lambda l, u: jnp.linspace(l, u, grid_size))(lower, upper)
+        self.vmap = vmap
+        self.X_grid = jax.vmap(lambda l, u: jnp.linspace(l, u, grid_size), out_axes=1)(lower, upper)
         self.scale = (upper - lower) / (grid_size - 1)
 
         self.theta = Parameter(
             jnp.linspace(0.2, 0.8, grid_size).reshape(-1, 1).repeat(X_inducing.shape[1], axis=1),
             bijector=get_positive_bijector(),
+            prior=tfd.Uniform(low=0.0, high=1 / grid_size),
         )
+
+        # n_repeat = len(self.active_dims) if self.vmap else 1
+        # self.bias = Parameter(jnp.array(1.0).repeat(n_repeat), bijector=get_positive_bijector())
 
     def __call__(self, X_inducing):
         def predict_fn(X):
@@ -109,11 +119,15 @@ class LatentGPGaussianBasis(LatentGP):
                 return pred_y
 
             pred_y_fn = jax.vmap(predict_1d, in_axes=(1, 1, 0, 1), out_axes=1)
-            pred_y_dim = pred_y_fn(X, self.X_grid, self.scale, self.theta())
-            pred_y = pred_y_dim.sum(axis=1)
+            # vec_bias = self.bias() if self.vmap else self.bias().repeat(len(self.active_dims))
+            pred_y_dim = pred_y_fn(X[:, self.active_dims], self.X_grid, self.scale, self.theta())
+            if self.vmap:
+                pred_y = pred_y_dim
+            else:
+                pred_y = pred_y_dim.sum(axis=1)
 
             if self._training:
-                return pred_y, 0.0
+                return pred_y, jnp.array(0.0)
             else:
                 return pred_y
 
@@ -122,7 +136,8 @@ class LatentGPGaussianBasis(LatentGP):
 
 class LatentGPHeinonen(LatentGP):
     def __call__(self, X_inducing):
-        X_inducing = jax.lax.stop_gradient(X_inducing)
+        if not self.sparse:
+            X_inducing = jax.lax.stop_gradient(X_inducing)
         pos_bijector = get_positive_bijector()
         kernel_fn = self.kernel.eval().get_kernel_fn()
 
@@ -290,17 +305,19 @@ class GP(Model):
         customize_fn(self)
 
         init_raw_params = self.get_raw_parameters()
+
+        def loss_fn(raw_params):
+            self.set_raw_parameters(raw_params)
+            return -self.log_probability(X, y)
+
         if optimizer_name == "adam":
             optimizer = optax.adam(learning_rate=lr)
             init_state = optimizer.init(init_raw_params)
 
-            def loss_fn(raw_params):
-                self.set_raw_parameters(raw_params)
-                return -self.log_probability(X, y)
-
             value_and_grad_fn = jax.value_and_grad(loss_fn)
 
             @jax.jit
+            # @scan_tqdm(epochs) # did not work
             def one_step(raw_params_and_state, aux):
                 raw_params, state = raw_params_and_state
                 loss, grads = value_and_grad_fn(raw_params)
@@ -318,10 +335,11 @@ class GP(Model):
                 "raw_params_history": raw_params_history,
                 "loss_history": loss_history,
             }
-        elif optimizer_name == "lbfgs":
-            optimizer = jaxopt.ScipyMinimize(fun=loss_fn)
+        elif optimizer_name in ["lbfgsb", "bfgs"]:
+            methods = {"lbfgsb": "L-BFGS-B", "bfgs": "BFGS"}
+            optimizer = jaxopt.ScipyMinimize(fun=loss_fn, method=methods[optimizer_name], maxiter=epochs)
             solution = optimizer.run(init_raw_params)
-            return {"raw_params": solution.params}
+            return {"raw_params": solution.params, "loss_history": [solution.state.fun_val]}
 
     def plot(self, X, y, X_test, ax=None, alpha=0.3, s=20):
         if X.shape[1] > 1:
@@ -405,7 +423,7 @@ class ExactGPRegression(GP):
         covariance, log_prior_kernel = kernel_fn(X, X)
 
         noise_scale, log_prior_likelihood = likelihood_fn(X)
-        noisy_covariance = add_to_diagonal(covariance, noise_scale**2, 0.0)
+        noisy_covariance = add_to_diagonal(covariance, noise_scale.ravel() ** 2, 0.0)
 
         log_likelihood = tfd.MultivariateNormalFullCovariance(
             loc=self.mean(y=y), covariance_matrix=noisy_covariance
@@ -423,6 +441,7 @@ class ExactGPRegression(GP):
         #     f"{log_likelihood=:.20f}, {log_prior_likelihood=}, total={log_likelihood + log_prior_kernel + log_prior_likelihood}"
         # )  # DEBUG
         if include_prior:
+            print(f"{log_likelihood=}, {log_prior_likelihood=}, {log_prior_kernel=}")
             log_probability = log_likelihood + log_prior_kernel + log_prior_likelihood
             # if hasattr(self.likelihood, "latent_model"):
             #     if self.likelihood.latent_model.__class__.__name__ == "LatentGPGaussianBasis":

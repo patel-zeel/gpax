@@ -62,11 +62,17 @@ class Sum(MathKernel):
     def operation(K1, K2):
         return K1 + K2
 
+    def __repr__(self) -> str:
+        return f"({self.k1} + {self.k2})"
+
 
 class Product(MathKernel):
     @staticmethod
     def operation(K1, K2):
         return K1 * K2
+
+    def __repr__(self) -> str:
+        return f"({self.k1} * {self.k2})"
 
 
 class Kernel(MetaKernel):
@@ -151,6 +157,18 @@ class Smooth(Kernel):
             return kernel_fn(X1, X2), 0.0
         else:
             return kernel_fn(X1, X2)
+
+
+class Wind(Smooth):
+    def pair_wise(self, x1, x2):
+        lat1, lon1, deg1 = x1[0], x1[1], x1[2]
+        lat2, lon2, deg2 = x2[0], x2[1], x2[2]
+        rad1 = self.degree_to_rad(deg1)
+        rad2 = self.degree_to_rad(deg2)
+        return jnp.exp(-jnp.square((lat1 - lat2) * jnp.sin(rad1) - jnp.cos(rad2) * (lon1 - lon2))).squeeze()
+
+    def degree_to_rad(self, deg):
+        return deg * jnp.pi / 180
 
 
 class RBF(Smooth):
@@ -332,15 +350,15 @@ class Gibbs(Kernel):
     def __init__(
         self,
         X_inducing: Array,
-        ell_model: LatentModel,
+        latent_model: LatentModel,
         active_dims: list = None,
         ARD: bool = True,
     ):
         super(Gibbs, self).__init__(X_inducing, active_dims)
         self.ARD = ARD
 
-        self.ell_model = ell_model
-        # assert self.ell_model.vmap is True, "ell_model must be a vmap model."
+        self.latent_model = latent_model
+        # assert self.latent_model.vmap is True, "latent_model must be a vmap model."
 
     @staticmethod
     def per_dim_std_cov(X1, X2, ell1, ell2):
@@ -361,7 +379,7 @@ class Gibbs(Kernel):
         def kernel_fn(X1, X2, X_inducing):  # X_inducing is passed here so that Local Variable error is not raised
             X1, X2, X_inducing = self.slice_inputs(X1, X2, X_inducing)
 
-            ell_fn = self.ell_model(X_inducing)
+            ell_fn = self.latent_model(X_inducing)
             if self._training:
                 # X1 and X2 should be the same here
                 ell1, log_ell_prior = ell_fn(X1)
@@ -371,9 +389,11 @@ class Gibbs(Kernel):
                 ell1, ell2 = ell_fn(X1), ell_fn(X2)
 
             if self.ARD:
-                std_cov = jax.vmap(self.per_dim_std_cov, in_axes=(1, 1, 1, 1), out_axes=2)(X1, X2, ell1, ell2).prod(
-                    axis=2
-                )
+                std_cov = 1.0
+                # Not applying a vmap here because it goes out of memory
+                for i in range(X1.shape[1]):
+                    print("Z-debug", X1.shape, X2.shape, ell1.shape, ell2.shape)
+                    std_cov *= self.per_dim_std_cov(X1[:, i], X2[:, i], ell1[:, i], ell2[:, i])
             else:
                 std_cov = self.per_dim_std_cov(X1, X2, ell1, ell2)
 
@@ -384,3 +404,6 @@ class Gibbs(Kernel):
                 return std_cov
 
         return lambda X1, X2: kernel_fn(X1, X2, X_inducing)
+
+    def __repr__(self) -> str:
+        return f"Gibbs"

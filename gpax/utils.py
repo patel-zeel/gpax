@@ -12,9 +12,19 @@ def index_pytree(pytree, index):
 
 
 class DataScaler:
-    def __init__(self, X, y=None):
-        self.X_min = X.min(axis=0)
-        self.X_scale = X.max(axis=0) - self.X_min
+    def __init__(self, X, y=None, active_dims=None):
+        if active_dims is not None:
+            self.active_dims = active_dims
+            all_dims = list(range(X.shape[1]))
+            self.inactive_dims = sorted(set(all_dims) - set(self.active_dims))
+            X_active = X[:, self.active_dims]
+        else:
+            self.active_dims = list(range(X.shape[1]))
+            self.inactive_dims = []
+            X_active = X
+
+        self.X_min = X_active.min(axis=0)
+        self.X_scale = X_active.max(axis=0) - self.X_min
         if y is not None:
             self.y_mean = y.mean()
             self.y_scale = jnp.max(jnp.abs(y - self.y_mean))
@@ -22,8 +32,13 @@ class DataScaler:
     def transform(self, X=None, y=None, ell=None, sigma=None, omega=None):
         res = []
         if X is not None:
-            fn = lambda x: (x - self.X_min) / self.X_scale
-            res.append(jtu.tree_map(fn, X))
+
+            def transform_(x):
+                x_new = (x[:, self.active_dims] - self.X_min) / self.X_scale
+                return x.at[:, self.active_dims].set(x_new)
+
+            X = jtu.tree_map(transform_, X)
+            res.append(X)
         if y is not None:
             fn = lambda x: (x - self.y_mean) / self.y_scale
             res.append(jtu.tree_map(fn, y))
@@ -41,8 +56,13 @@ class DataScaler:
     def inverse_transform(self, X=None, y=None, ell=None, sigma=None, omega=None):
         res = []
         if X is not None:
-            fn = lambda x: x * self.X_scale + self.X_min
-            res.append(jtu.tree_map(fn, X))
+
+            def inv_trans_fn(x):
+                x_new = x[:, self.active_dims] * self.X_scale + self.X_min
+                return x.at[:, self.active_dims].set(x_new)
+
+            X = jtu.tree_map(inv_trans_fn, X)
+            res.append(X)
         if y is not None:
             fn = lambda x: x * self.y_scale + self.y_mean
             res.append(jtu.tree_map(fn, y))
